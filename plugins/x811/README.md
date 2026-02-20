@@ -75,6 +75,7 @@ Tell Claude:
 - `/x811:status` — Show agent identity and network status
 - `/x811:provide` — Start autonomous provider mode
 - `/x811:request` — Start autonomous initiator mode
+- `/x811:setup` — First-time setup: build, test, and publish npm packages
 
 ## Links
 
