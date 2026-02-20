@@ -1,0 +1,32 @@
+# ============================================================================
+# x811 Protocol — Docker Compose
+# ============================================================================
+
+services:
+  x811-server:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    ports:
+      - "3811:3811"
+    environment:
+      PORT: "3811"
+      NODE_ENV: production
+      DATABASE_URL: /data/x811.db
+      LOG_LEVEL: info
+      BASE_RPC_URL: ${BASE_RPC_URL:-https://mainnet.base.org}
+      CONTRACT_ADDRESS: ${CONTRACT_ADDRESS:-}
+      RELAYER_PRIVATE_KEY: ${RELAYER_PRIVATE_KEY:-}
+    volumes:
+      - x811-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:3811/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  x811-data:
+    driver: local

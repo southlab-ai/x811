@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "x811": {
+      "command": "node",
+      "args": ["C:/Proyectos/x811 MVP/packages/mcp-server/dist/index.js"],
+      "env": {
+        "X811_SERVER_URL": "http://localhost:3811",
+        "X811_STATE_DIR": "C:/Users/jcardenas/.x811-initiator"
+      }
+    }
+  }
+}

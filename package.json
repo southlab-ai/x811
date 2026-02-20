@@ -1,0 +1,37 @@
+{
+  "name": "x811-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "x811 Protocol MVP — Decentralized AI Agent Identity, Trust & Settlement",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "packages/core",
+    "packages/server",
+    "packages/sdk-ts",
+    "packages/mcp-server"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "dev": "turbo run dev",
+    "test:core": "npm run test --workspace=@x811/core",
+    "test:server": "npm run test --workspace=@x811/server",
+    "test:contract": "cd packages/contracts && forge test",
+    "demo": "tsx demo/run-demo.ts",
+    "clean": "turbo run clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.4.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "npm@10.0.0"
+}

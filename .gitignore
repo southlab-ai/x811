@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+coverage/
+.env
+.env.local
+*.db
+*.db-journal
+data/
+
+# Foundry
+packages/contracts/out/
+packages/contracts/cache/
+packages/contracts/lib/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Claude Code / Council (local)
+.claude/
+.council/
+.mcp.json
