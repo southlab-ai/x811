@@ -13,7 +13,7 @@
       "name": "x811",
       "source": "./plugins/x811",
       "description": "x811 Protocol — AI agent identity (DID), autonomous negotiation, trust verification, and USDC settlement on Base L2. Register, discover, negotiate, execute, verify, and pay — zero human intervention.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "x811 Protocol"
       },
