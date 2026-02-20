@@ -6,7 +6,7 @@ services:
   x811-server:
     build:
       context: .
-      dockerfile: packages/server/Dockerfile
+      dockerfile: Dockerfile
     ports:
       - "3811:3811"
     environment:
