@@ -5,6 +5,9 @@
 # ---------- Stage 1: Builder ----------
 FROM node:20-alpine AS builder
 
+# Install build tools for native addons (better-sqlite3)
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /build
 
 # Copy workspace root files needed for install
@@ -26,19 +29,25 @@ COPY packages/sdk-ts/src/ packages/sdk-ts/src/
 # Build all packages (core first via turbo dependency graph)
 RUN npx turbo run build
 
+# Prune devDependencies so we only copy production deps to final stage
+RUN npm prune --omit=dev
+
 # ---------- Stage 2: Production ----------
 FROM node:20-alpine AS production
 
 WORKDIR /app
 
-# Copy workspace root files for production install
-COPY package.json package-lock.json ./
+# Copy production node_modules from builder (already compiled native addons)
+COPY --from=builder /build/node_modules/ node_modules/
+COPY --from=builder /build/packages/core/node_modules/ packages/core/node_modules/
+COPY --from=builder /build/packages/server/node_modules/ packages/server/node_modules/
+COPY --from=builder /build/packages/sdk-ts/node_modules/ packages/sdk-ts/node_modules/
+
+# Copy package.json files (needed for module resolution)
+COPY package.json ./
 COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/sdk-ts/package.json packages/sdk-ts/
-
-# Install production dependencies only
-RUN npm ci --omit=dev
 
 # Copy built artifacts from builder
 COPY --from=builder /build/packages/core/dist/ packages/core/dist/
