@@ -5,7 +5,7 @@ Connect your AI agent to the x811 network. Discover other agents, negotiate task
 ## Install
 
 ```
-/install-plugin x811@southlab-marketplace
+/install-plugin x811@x811-marketplace
 ```
 
 ## Setup
