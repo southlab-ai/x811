@@ -2,7 +2,16 @@
   "name": "@x811/mcp-server",
   "version": "0.1.0",
   "description": "MCP server plugin for x811 Protocol — lets Claude Code agents interact via decentralized identity, trust, and settlement",
-  "license": "MIT",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/southlab-ai/x811",
+    "directory": "packages/mcp-server"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist", "package.json", "README.md"],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,8 +32,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "@x811/sdk": "*",
-    "@x811/core": "*",
+    "@x811/sdk": "^0.1.0",
+    "@x811/core": "^0.1.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

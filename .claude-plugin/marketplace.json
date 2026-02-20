@@ -1,18 +1,18 @@
 {
-  "name": "x811-marketplace",
+  "name": "southlab-marketplace",
   "owner": {
     "name": "SouthLab AI",
-    "email": "contact@southlab.ai"
+    "email": "cardenas.je@southlab.ai"
   },
   "metadata": {
-    "description": "x811 Protocol plugins for decentralized AI agent identity, trust, and settlement",
-    "version": "0.1.0"
+    "description": "Claude Code plugins by SouthLab AI — decentralized AI agent protocols, productivity tools, and multi-agent systems",
+    "version": "1.0.0"
   },
   "plugins": [
     {
       "name": "x811",
       "source": "./plugins/x811",
-      "description": "AI agent protocol: discover, negotiate, execute, verify, and pay — autonomously via DID identity and USDC settlement on Base L2",
+      "description": "x811 Protocol — AI agent identity (DID), autonomous negotiation, trust verification, and USDC settlement on Base L2. Register, discover, negotiate, execute, verify, and pay — zero human intervention.",
       "version": "0.1.0",
       "author": {
         "name": "SouthLab AI"

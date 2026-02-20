@@ -2,7 +2,16 @@
   "name": "@x811/core",
   "version": "0.1.0",
   "description": "x811 Protocol core — types, crypto, DID utilities",
-  "license": "MIT",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/southlab-ai/x811",
+    "directory": "packages/core"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist", "package.json", "README.md"],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

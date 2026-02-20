@@ -2,7 +2,16 @@
   "name": "@x811/sdk",
   "version": "0.1.0",
   "description": "x811 Protocol TypeScript SDK — X811Client",
-  "license": "MIT",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/southlab-ai/x811",
+    "directory": "packages/sdk-ts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": ["dist", "package.json", "README.md"],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,7 +29,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@x811/core": "*"
+    "@x811/core": "^0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
