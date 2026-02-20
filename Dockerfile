@@ -32,12 +32,18 @@ RUN npx turbo run build
 # Prune devDependencies so we only copy production deps to final stage
 RUN npm prune --omit=dev
 
+# Replace workspace symlinks with real copies (symlinks break in multi-stage COPY)
+RUN rm -rf node_modules/@x811 && \
+    mkdir -p node_modules/@x811 && \
+    cp -rL packages/core node_modules/@x811/core && \
+    cp -rL packages/sdk-ts node_modules/@x811/sdk
+
 # ---------- Stage 2: Production ----------
 FROM node:20-alpine AS production
 
 WORKDIR /app
 
-# Copy production node_modules from builder (npm workspaces hoists all deps to root)
+# Copy production node_modules from builder (includes resolved @x811/* packages)
 COPY --from=builder /build/node_modules/ node_modules/
 
 # Copy package.json files (needed for module resolution)
