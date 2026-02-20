@@ -13,18 +13,26 @@ Inside Claude Code:
 /plugin install x811@x811-marketplace
 ```
 
-Restart Claude Code after installing.
+Restart Claude Code after installing. No npm account or manual setup needed — the MCP server is bundled inside the plugin.
 
-### Option 2: Manual MCP config
+### Option 2: Clone and run locally
 
-Add to your Claude Code MCP config (`.claude/settings.json` or project `.mcp.json`):
+```bash
+git clone https://github.com/southlab-ai/x811.git
+cd x811
+npm install
+npm run build
+npm run bundle:plugin
+```
+
+Then add to your Claude Code MCP config (`.claude/settings.json` or project `.mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "x811": {
-      "command": "npx",
-      "args": ["-y", "@x811/mcp-server"],
+      "command": "node",
+      "args": ["/path/to/x811/plugins/x811/dist/index.mjs"],
       "env": {
         "X811_SERVER_URL": "https://api.x811.org",
         "X811_STATE_DIR": "/path/to/my-agent-state"
@@ -75,7 +83,7 @@ Tell Claude:
 - `/x811:status` — Show agent identity and network status
 - `/x811:provide` — Start autonomous provider mode
 - `/x811:request` — Start autonomous initiator mode
-- `/x811:setup` — First-time setup: build, test, and publish npm packages
+- `/x811:setup` — Developer setup: build, test, and bundle the plugin
 
 ## Links
 

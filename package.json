@@ -19,16 +19,18 @@
     "test:server": "npm run test --workspace=@x811/server",
     "test:contract": "cd packages/contracts && forge test",
     "demo": "tsx demo/run-demo.ts",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "bundle:plugin": "node scripts/bundle-plugin.mjs"
   },
   "devDependencies": {
-    "turbo": "^2.3.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.0.0",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.27.3",
     "eslint": "^9.0.0",
     "prettier": "^3.4.0",
     "tsx": "^4.19.0",
-    "@types/node": "^22.0.0"
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   },
   "engines": {
     "node": ">=20.0.0"

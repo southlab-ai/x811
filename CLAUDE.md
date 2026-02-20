@@ -111,20 +111,11 @@ Three modes: `auto` (accepts if price ≤ budget AND time ≤ deadline AND trust
 
 REQUEST→OFFER: 60s, OFFER→ACCEPT: 5min, ACCEPT→RESULT: 1h, RESULT→VERIFY: 30s, VERIFY→PAY: 60s, PAY confirmation: 30s, payment retries: 4 (backoff 5s/15s/60s/300s).
 
-## MCP Server Plugin (`packages/mcp-server`)
+## MCP Server Plugin
 
-The MCP server wraps `@x811/sdk` so Claude Code agents can participate in the x811 protocol directly as tools.
+The MCP server source lives in `packages/mcp-server/` and is bundled via esbuild into `plugins/x811/dist/index.mjs`. The plugin uses `${CLAUDE_PLUGIN_ROOT}/dist/index.mjs` — no npm publish needed.
 
-**Install in Claude Code settings:**
-```json
-"mcpServers": {
-  "x811": {
-    "command": "node",
-    "args": ["/path/to/packages/mcp-server/dist/index.js"],
-    "env": { "X811_SERVER_URL": "https://api.x811.org" }
-  }
-}
-```
+**Bundle command:** `npm run bundle:plugin`
 
 **Key implementation details:**
 - DID keys are persisted to `~/.x811/keys.json` so agent identity survives restarts
@@ -178,11 +169,15 @@ DID_DOMAIN                # default x811.org
 When making changes to the plugin (skills, commands, MCP server, tools), always follow this checklist:
 
 1. **Make code changes** in `plugins/x811/` and/or `packages/mcp-server/`
-2. **Bump version** in both files (keep them in sync):
+2. **Rebuild the bundle** if MCP server code changed:
+   ```bash
+   npm run build && npm run bundle:plugin
+   ```
+3. **Bump version** in both files (keep them in sync):
    - `.claude-plugin/marketplace.json` → `plugins[0].version`
    - `plugins/x811/.claude-plugin/plugin.json` → `version`
-3. **Commit and push** — the marketplace serves from `origin/main`
-4. **Users update** by reinstalling the plugin in Claude Code:
+4. **Commit and push** (including `plugins/x811/dist/index.mjs`) — the marketplace serves from `origin/main`
+5. **Users update** by reinstalling the plugin in Claude Code:
    ```
    /plugin install x811@x811-marketplace
    ```

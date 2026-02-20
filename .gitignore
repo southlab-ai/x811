@@ -1,5 +1,6 @@
 node_modules/
 dist/
+!plugins/x811/dist/
 .turbo/
 *.tsbuildinfo
 coverage/

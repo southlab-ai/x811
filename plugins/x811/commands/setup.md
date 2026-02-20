@@ -1,18 +1,16 @@
 ---
-description: First-time setup — build, test, and publish @x811/core, @x811/sdk, @x811/mcp-server to npm
+description: Developer setup — build, test, and bundle the MCP server plugin
 argument-hint: ""
 ---
 
 # /x811:setup
 
-First-time setup for the x811 Protocol npm packages.
+Developer setup for the x811 Protocol. Builds all packages and bundles the MCP server into the plugin.
 
 ## Workflow
 
-1. Verify npm login (`npm whoami`)
-2. Clean build all packages (`turbo clean && turbo build`)
-3. Run tests (`npm run test`)
-4. Check which packages are already published
-5. Publish in order: `@x811/core` → `@x811/sdk` → `@x811/mcp-server`
-6. Verify all packages are available on npm
-7. Show install instructions
+1. Clean build all packages (`turbo clean && turbo build`)
+2. Run tests (`npm run test`)
+3. Bundle plugin (`npm run bundle:plugin`)
+4. Verify the bundle starts correctly
+5. Show results
