@@ -37,11 +37,8 @@ FROM node:20-alpine AS production
 
 WORKDIR /app
 
-# Copy production node_modules from builder (already compiled native addons)
+# Copy production node_modules from builder (npm workspaces hoists all deps to root)
 COPY --from=builder /build/node_modules/ node_modules/
-COPY --from=builder /build/packages/core/node_modules/ packages/core/node_modules/
-COPY --from=builder /build/packages/server/node_modules/ packages/server/node_modules/
-COPY --from=builder /build/packages/sdk-ts/node_modules/ packages/sdk-ts/node_modules/
 
 # Copy package.json files (needed for module resolution)
 COPY package.json ./
