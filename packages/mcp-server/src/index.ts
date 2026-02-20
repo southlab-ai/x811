@@ -31,7 +31,7 @@ import type { DIDKeyPair } from "@x811/core";
 // Configuration
 // ---------------------------------------------------------------------------
 
-const SERVER_URL = process.env.X811_SERVER_URL || "http://localhost:3811";
+const SERVER_URL = process.env.X811_SERVER_URL || "https://api.x811.org";
 const STATE_DIR = process.env.X811_STATE_DIR || join(homedir(), ".x811");
 const KEYS_FILE = join(STATE_DIR, "keys.json");
 

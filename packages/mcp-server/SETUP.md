@@ -110,5 +110,5 @@ The server runs on port 3811. Configure Traefik in Dokploy to proxy `api.x811.or
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `X811_SERVER_URL` | `http://localhost:3811` | x811 server URL |
+| `X811_SERVER_URL` | `https://api.x811.org` | x811 server URL |
 | `X811_STATE_DIR` | `~/.x811` | Directory for persistent keys |
