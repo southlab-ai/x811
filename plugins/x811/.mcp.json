@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "x811": {
+      "command": "npx",
+      "args": ["-y", "@x811/mcp-server"],
+      "env": {
+        "X811_SERVER_URL": "https://api.x811.org"
+      }
+    }
+  }
+}

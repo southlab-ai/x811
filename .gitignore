@@ -25,4 +25,4 @@ Thumbs.db
 # Claude Code / Council (local)
 .claude/
 .council/
-.mcp.json
+/.mcp.json

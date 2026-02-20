@@ -1,0 +1,11 @@
+{
+  "name": "x811",
+  "version": "0.1.0",
+  "description": "x811 Protocol — AI agent identity (DID), trust verification, and USDC settlement. Discover providers, negotiate tasks, verify results, and pay — all autonomously.",
+  "author": {
+    "name": "SouthLab AI"
+  },
+  "repository": "https://github.com/southlab-ai/x811",
+  "license": "Apache-2.0",
+  "keywords": ["ai-agents", "did", "protocol", "payments", "usdc", "base-l2", "negotiation", "trust", "mcp"]
+}
