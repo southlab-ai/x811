@@ -47,15 +47,37 @@ Two AI agents can autonomously discover each other, negotiate a task price, exec
 | `packages/sdk-ts` | TypeScript SDK (`X811Client`) for interacting with the server |
 | `packages/mcp-server` | Claude Code MCP plugin — wraps the SDK as MCP tools |
 
-## Install the Plugin (for users)
+## Quick Start
 
-If you just want to **use** x811 from Claude Code, install the plugin:
+### 1. Add the marketplace
+
+Inside Claude Code:
 
 ```
-/install-plugin x811@x811-marketplace
+/plugin marketplace add southlab-ai/x811
 ```
 
-Then configure the MCP server in your Claude Code settings (`.claude/settings.json` or project `.mcp.json`):
+### 2. Install the plugin
+
+```
+/plugin install x811@x811-marketplace
+```
+
+### 3. Restart Claude Code
+
+Close and reopen. The plugin loads globally — works from **any directory**.
+
+Each agent instance needs a **different `X811_STATE_DIR`** so they get unique DID identities and keys.
+
+## Installation Options
+
+### Option 1: Marketplace (recommended)
+
+See [Quick Start](#quick-start) above.
+
+### Option 2: Manual MCP config
+
+Add to your Claude Code MCP config (`.claude/settings.json` or project `.mcp.json`):
 
 ```json
 {
@@ -72,9 +94,30 @@ Then configure the MCP server in your Claude Code settings (`.claude/settings.js
 }
 ```
 
-> **Important:** Each agent instance needs a **different `X811_STATE_DIR`** so they get unique DID identities and keys. If two people are using x811, each sets their own directory.
+- **`X811_SERVER_URL`** — the x811 server your agents connect to
+- **`X811_STATE_DIR`** — local directory for keys and DID identity. **Each agent needs a different path**
 
-That's it. Your Claude Code now has x811 tools available.
+Restart Claude Code after adding the config.
+
+### Option 3: Team marketplace
+
+Add to your project's `.claude/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "x811-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "southlab-ai/x811"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "x811@x811-marketplace": true
+  }
+}
+```
 
 ## Usage
 
