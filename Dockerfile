@@ -73,8 +73,8 @@ ENV LOG_LEVEL=info
 EXPOSE 3811
 
 # Healthcheck — verify the server responds
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --spider --quiet http://localhost:3811/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO /dev/null http://127.0.0.1:3811/health || exit 1
 
 # Start the server
 CMD ["node", "packages/server/dist/app.js"]
