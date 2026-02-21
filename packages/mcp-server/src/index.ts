@@ -1,5 +1,17 @@
 #!/usr/bin/env node
 
+// ---------------------------------------------------------------------------
+// Node.js v22+ enforcement — AgentKit SDK requires Node 22+
+// ---------------------------------------------------------------------------
+if (parseInt(process.versions.node) < 22) {
+  process.stderr.write(
+    "[x811] ERROR: Node.js v22+ required (found v" +
+      process.versions.node +
+      "). AgentKit SDK requires Node 22+.\n",
+  );
+  process.exit(1);
+}
+
 /**
  * x811 Protocol — MCP Server Plugin for Claude Code
  *
@@ -24,8 +36,11 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-import { X811Client, MockWalletService, generateDID } from "@x811/sdk";
+import { X811Client, generateDID, createWalletAdapter } from "@x811/sdk";
+import type { WalletAdapter } from "@x811/sdk";
 import type { DIDKeyPair } from "@x811/core";
+import { initBuffer, pushToBuffer, consumeFromBuffer, drainBuffer, bufferSize } from "./buffer-utils.js";
+import { SSEClient } from "./sse-client.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -49,7 +64,7 @@ interface SerializedKeys {
 
 function saveKeys(keyPair: DIDKeyPair): void {
   if (!existsSync(STATE_DIR)) {
-    mkdirSync(STATE_DIR, { recursive: true });
+    mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   }
   const data: SerializedKeys = {
     did: keyPair.did,
@@ -58,7 +73,7 @@ function saveKeys(keyPair: DIDKeyPair): void {
     encryptionPublicKey: Buffer.from(keyPair.encryptionKey.publicKey).toString("hex"),
     encryptionPrivateKey: Buffer.from(keyPair.encryptionKey.privateKey).toString("hex"),
   };
-  writeFileSync(KEYS_FILE, JSON.stringify(data, null, 2));
+  writeFileSync(KEYS_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
 }
 
 function loadKeys(): DIDKeyPair | null {
@@ -96,7 +111,9 @@ function getOrCreateKeys(): DIDKeyPair {
 
 const keyPair = getOrCreateKeys();
 const client = new X811Client({ serverUrl: SERVER_URL, keyPair });
-const wallet = new MockWalletService();
+
+// Wallet adapter — initialized async, null means no wallet configured
+let wallet: WalletAdapter | null = null;
 
 let registered = false;
 let agentName = "";
@@ -108,13 +125,34 @@ process.stderr.write(`[x811]   Server: ${SERVER_URL}\n`);
 process.stderr.write(`[x811]   State dir: ${STATE_DIR}\n`);
 process.stderr.write(`[x811]   Keys file: ${KEYS_FILE}\n`);
 
-// ---------------------------------------------------------------------------
-// Local message buffer — prevents message loss on poll
-// ---------------------------------------------------------------------------
-// The server marks ALL polled messages as "delivered" (consumed).
-// If we poll and get a message of the wrong type, it's lost forever
-// unless we buffer it locally and check the buffer before polling.
-const messageBuffer: Array<Record<string, unknown>> = [];
+// Initialize persistent message buffer from disk
+initBuffer();
+
+// SSE client — connects on startup, falls back to poll mode on failure
+const sseClient = new SSEClient();
+
+// Initialize wallet adapter (async — runs before server starts)
+const walletInitPromise = createWalletAdapter().then((adapter: WalletAdapter | null) => {
+  wallet = adapter;
+  if (adapter) {
+    process.stderr.write(`[x811:wallet] Ready: mode=${adapter.mode}, address=${adapter.address}\n`);
+  }
+}).catch((err: unknown) => {
+  process.stderr.write(`[x811:wallet] Init error: ${err instanceof Error ? err.message : String(err)}\n`);
+});
+
+// Connect to SSE push stream (non-blocking — startup continues regardless)
+// Wait for wallet init to complete first, then connect
+walletInitPromise.finally(() => {
+  sseClient.connect(
+    SERVER_URL,
+    client.did,
+    () => "", // SSE uses ?did= query param auth, no auth header needed
+    pushToBuffer,
+  ).catch((err: unknown) => {
+    process.stderr.write(`[x811:sse] connection error: ${err instanceof Error ? err.message : String(err)}\n`);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // MCP Server
@@ -134,7 +172,16 @@ server.tool(
   "Show your x811 agent identity: DID, server URL, registration status, and wallet address",
   {},
   async () => {
-    const balance = await wallet.getBalance();
+    const walletMode = wallet?.mode ?? "none";
+    const walletAddress = wallet?.address ?? "N/A";
+    let walletBalance: string | number = "N/A";
+    if (wallet) {
+      try { walletBalance = await wallet.getBalance(); } catch { walletBalance = "error"; }
+    }
+    const warnings: string[] = [];
+    if (walletMode === "mock") warnings.push("WARNING: Using test wallet — no real USDC will be transferred");
+    if (walletMode === "none") warnings.push("No wallet configured. Set CDP_API_KEY_* env vars for AgentKit or X811_PRIVATE_KEY for Ethers.");
+
     return {
       content: [{
         type: "text",
@@ -143,9 +190,11 @@ server.tool(
           server: SERVER_URL,
           registered,
           agent_name: agentName || "(not registered)",
-          wallet_address: wallet.address,
-          wallet_balance_usdc: balance,
+          wallet_mode: walletMode,
+          wallet_address: walletAddress,
+          wallet_balance_usdc: walletBalance,
           keys_file: KEYS_FILE,
+          ...(warnings.length > 0 ? { warnings } : {}),
         }, null, 2),
       }],
     };
@@ -305,7 +354,7 @@ server.tool(
   async () => {
     try {
       // Include any buffered messages from autonomous tool polls
-      const buffered = messageBuffer.splice(0, messageBuffer.length);
+      const buffered = drainBuffer();
       const serverMessages = await client.poll();
       const allMessages = [
         ...buffered,
@@ -503,19 +552,35 @@ server.tool(
   {
     provider_did: z.string().describe("DID of the provider"),
     interaction_id: z.string().describe("Interaction ID to verify"),
+    result_hash: z.string().optional().describe("SHA-256 hash of the result (from the result message)"),
+    verified: z.boolean().optional().describe("true = result accepted; false = disputed (default: true)"),
+    dispute_reason: z.string().optional().describe("Human-readable dispute reason (required if verified=false)"),
+    dispute_code: z.enum(["WRONG_RESULT", "INCOMPLETE", "TIMEOUT", "QUALITY", "OTHER"]).optional()
+      .describe("Machine-readable dispute code (required if verified=false)"),
   },
-  async ({ provider_did, interaction_id }) => {
+  async ({ provider_did, interaction_id, result_hash, verified, dispute_reason, dispute_code }) => {
     try {
-      const messageId = await client.sendVerify(provider_did, interaction_id);
+      const isVerified = verified ?? true;
+      const verifyPayload = {
+        request_id: interaction_id,
+        offer_id: interaction_id,
+        result_hash: result_hash || "",
+        verified: isVerified,
+        ...(dispute_reason ? { dispute_reason } : {}),
+        ...(dispute_code ? { dispute_code } : {}),
+      };
+
+      const sendResult = await client.send(provider_did, "x811/verify", verifyPayload);
+      const messageId = sendResult.message_id;
       return {
         content: [{
-          type: "text",
-          text: `Verification sent! message_id: ${messageId}\n\nNow send payment with x811_pay.`,
+          type: "text" as const,
+          text: `Verification sent! message_id: ${messageId}\nverified: ${isVerified}${!isVerified ? `\ndispute: ${dispute_code} — ${dispute_reason}` : ""}\n\nNow send payment with x811_pay.`,
         }],
       };
     } catch (err) {
       return {
-        content: [{ type: "text", text: `Verify failed: ${err instanceof Error ? err.message : String(err)}` }],
+        content: [{ type: "text" as const, text: `Verify failed: ${err instanceof Error ? err.message : String(err)}` }],
         isError: true,
       };
     }
@@ -537,14 +602,41 @@ server.tool(
     payee_address: z.string().describe("Provider's Ethereum address"),
   },
   async ({ provider_did, request_id, offer_id, amount, payee_address }) => {
+    if (!wallet) {
+      return { content: [{ type: "text" as const, text: "No wallet configured. Set CDP_API_KEY_* env vars for AgentKit or X811_PRIVATE_KEY for Ethers. Run x811_setup_wallet for instructions." }], isError: true };
+    }
     try {
+      // Calculate fee split: 2.5% protocol fee
+      const providerAmount = amount;
+      const protocolFee = parseFloat((amount * 0.025).toFixed(6));
+      const treasuryAddress = process.env.X811_TREASURY_ADDRESS;
+
+      // Transfer 1: Pay provider
       const paymentResult = await wallet.pay({
         to_address: payee_address,
-        amount,
+        amount: String(providerAmount),
         providerDid: provider_did,
         requestId: request_id,
         offerId: offer_id,
       });
+
+      // Transfer 2: Pay protocol fee to treasury (if configured and fee > 0)
+      let feeTxHash: string | undefined;
+      if (treasuryAddress && protocolFee > 0) {
+        try {
+          const feeResult = await wallet.pay({
+            to_address: treasuryAddress,
+            amount: String(protocolFee),
+            providerDid: "x811-treasury",
+            requestId: request_id,
+            offerId: offer_id,
+          });
+          feeTxHash = feeResult.tx_hash;
+          process.stderr.write(`[x811:pay] Protocol fee $${protocolFee} sent to treasury: ${feeTxHash}\n`);
+        } catch (feeErr) {
+          process.stderr.write(`[x811:pay] Protocol fee transfer failed (non-fatal): ${feeErr instanceof Error ? feeErr.message : String(feeErr)}\n`);
+        }
+      }
 
       const messageId = await client.pay(provider_did, {
         request_id,
@@ -555,12 +647,14 @@ server.tool(
         network: "base",
         payer_address: paymentResult.payer_address,
         payee_address: paymentResult.payee_address,
+        fee_tx_hash: feeTxHash,
       });
 
+      const feeInfo = feeTxHash ? `\nfee_tx_hash: ${feeTxHash} ($${protocolFee} protocol fee)` : (treasuryAddress ? "\nfee: failed (logged, non-fatal)" : "\nfee: skipped (no treasury configured)");
       return {
         content: [{
           type: "text",
-          text: `Payment sent! $${amount} USDC\nmessage_id: ${messageId}\ntx_hash: ${paymentResult.tx_hash}`,
+          text: `Payment sent! $${amount} USDC\nmessage_id: ${messageId}\ntx_hash: ${paymentResult.tx_hash}${feeInfo}`,
         }],
       };
     } catch (err) {
@@ -669,15 +763,14 @@ async function pollForMessage(
   const deadline = Date.now() + timeoutMs;
   const collected: unknown[] = [];
   const remainingSec = () => Math.round((deadline - Date.now()) / 1000);
-  process.stderr.write(`[x811] pollForMessage: waiting for "${type}" (timeout: ${timeoutMs / 1000}s, buffer: ${messageBuffer.length})\n`);
+  process.stderr.write(`[x811] pollForMessage: waiting for "${type}" (timeout: ${timeoutMs / 1000}s, buffer: ${bufferSize()})\n`);
 
   while (Date.now() < deadline) {
-    // Step 1: Check local buffer FIRST (messages from previous polls)
-    const bufferedIdx = messageBuffer.findIndex((m) => m.type === type);
-    if (bufferedIdx !== -1) {
-      const match = messageBuffer.splice(bufferedIdx, 1)[0];
+    // Step 1: Check persistent buffer FIRST (messages from previous polls)
+    const buffered = consumeFromBuffer(type);
+    if (buffered) {
       process.stderr.write(`[x811] pollForMessage: MATCHED "${type}" from LOCAL BUFFER!\n`);
-      return { message: match, all: [match, ...messageBuffer] };
+      return { message: buffered, all: [buffered] };
     }
 
     // Step 2: Poll server for new messages
@@ -693,8 +786,8 @@ async function pollForMessage(
         if (!matched && msg.type === type) {
           matched = msg;
         } else {
-          // Buffer ALL non-matching messages to prevent loss
-          messageBuffer.push(msg);
+          // Buffer ALL non-matching messages to prevent loss (persisted to disk)
+          pushToBuffer(msg);
         }
       }
 
@@ -706,11 +799,11 @@ async function pollForMessage(
       process.stderr.write(`[x811] poll error: ${err instanceof Error ? err.message : String(err)}\n`);
     }
 
-    process.stderr.write(`[x811] poll: no "${type}" yet, ${remainingSec()}s remaining, buffer: ${messageBuffer.length}\n`);
+    process.stderr.write(`[x811] poll: no "${type}" yet, ${remainingSec()}s remaining, buffer: ${bufferSize()}\n`);
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 
-  process.stderr.write(`[x811] pollForMessage: TIMEOUT waiting for "${type}" (buffer has ${messageBuffer.length} unmatched)\n`);
+  process.stderr.write(`[x811] pollForMessage: TIMEOUT waiting for "${type}" (buffer has ${bufferSize()} unmatched)\n`);
   return { message: null, all: collected };
 }
 
@@ -797,6 +890,7 @@ server.tool(
         estimated_time: 30,
         deliverables: [`${capability} result`],
         expiry: 300,
+        payment_address: wallet?.address ?? "",
       });
       log.push(`  ✓ Offer sent`);
       process.stderr.write(`[x811:provider] Offer sent successfully!\n`);
@@ -807,7 +901,8 @@ server.tool(
 
       if (!acceptResult.message) {
         // Check buffer and collected messages for a reject
-        const allMsgs = [...messageBuffer, ...acceptResult.all.map((m) => m as Record<string, unknown>)];
+        const bufferedMsgs = drainBuffer();
+        const allMsgs = [...bufferedMsgs, ...acceptResult.all.map((m) => m as Record<string, unknown>)];
         const rejectMsg = allMsgs.find(
           (m) => m.type === "x811/reject"
         );
@@ -989,15 +1084,70 @@ server.tool(
       });
       log.push(`  ✓ Verification sent`);
 
-      // Step 8: Pay
-      log.push(`[8/8] Paying $${totalCost} USDC...`);
+      // Step 8: Pay — extract provider's payment address from offer, with fee split
+      if (!wallet) {
+        log.push(`  ✗ No wallet configured. Set CDP_API_KEY_* env vars for AgentKit or X811_PRIVATE_KEY for Ethers.`);
+        return { content: [{ type: "text" as const, text: log.join("\n") }], isError: true };
+      }
+      let payToAddress = (offerPayload.payment_address as string) || "";
+      if (!payToAddress || payToAddress === "0x" + "0".repeat(40)) {
+        // Fallback: try to get from agent card
+        try {
+          const agentCard = await client.getAgentCard(providerDid);
+          const cardAddress = (agentCard as unknown as Record<string, unknown>)?.payment_address as string;
+          if (cardAddress && cardAddress !== "0x" + "0".repeat(40)) {
+            payToAddress = cardAddress;
+            log.push(`  -> Using payment address from agent card: ${cardAddress}`);
+          } else {
+            log.push(`  ✗ Provider has no payment address registered (X811-5002)`);
+            return { content: [{ type: "text" as const, text: log.join("\n") }], isError: true };
+          }
+        } catch {
+          log.push(`  ✗ Cannot resolve provider payment address (X811-5002). Provider must register with a payment_address.`);
+          return { content: [{ type: "text" as const, text: log.join("\n") }], isError: true };
+        }
+      }
+
+      // Fee split: provider payment + protocol fee
+      const providerPayment = offerPayload.price as string || String(totalCost);
+      const protocolFeeStr = offerPayload.protocol_fee as string || "0";
+      const protocolFee = parseFloat(protocolFeeStr);
+      const treasuryAddress = process.env.X811_TREASURY_ADDRESS;
+
+      log.push(`[8/8] Paying $${providerPayment} USDC to provider ${payToAddress}...`);
+
+      // Transfer 1: Pay provider
       const paymentResult = await wallet.pay({
-        to_address: "0x0000000000000000000000000000000000000000",
-        amount: totalCost,
+        to_address: payToAddress,
+        amount: providerPayment,
         providerDid,
         requestId: interactionId,
         offerId: interactionId,
       });
+      log.push(`  ✓ Provider payment sent! tx: ${paymentResult.tx_hash}`);
+
+      // Transfer 2: Pay protocol fee to treasury (if configured and fee > 0)
+      let feeTxHash: string | undefined;
+      if (treasuryAddress && protocolFee > 0) {
+        try {
+          const feeResult = await wallet.pay({
+            to_address: treasuryAddress,
+            amount: protocolFeeStr,
+            providerDid: "x811-treasury",
+            requestId: interactionId,
+            offerId: interactionId,
+          });
+          feeTxHash = feeResult.tx_hash;
+          log.push(`  ✓ Protocol fee $${protocolFeeStr} sent to treasury: ${feeTxHash}`);
+          process.stderr.write(`[x811:initiator] Protocol fee $${protocolFeeStr} sent to treasury: ${feeTxHash}\n`);
+        } catch (feeErr) {
+          log.push(`  ! Protocol fee transfer failed (non-fatal): ${feeErr instanceof Error ? feeErr.message : String(feeErr)}`);
+          process.stderr.write(`[x811:initiator] Protocol fee transfer failed (non-fatal): ${feeErr instanceof Error ? feeErr.message : String(feeErr)}\n`);
+        }
+      } else if (!treasuryAddress && protocolFee > 0) {
+        log.push(`  ! Protocol fee $${protocolFeeStr} skipped (no X811_TREASURY_ADDRESS configured)`);
+      }
+
       await client.pay(providerDid, {
         request_id: interactionId,
         offer_id: interactionId,
@@ -1007,8 +1157,8 @@ server.tool(
         network: "base",
         payer_address: paymentResult.payer_address,
         payee_address: paymentResult.payee_address,
+        fee_tx_hash: feeTxHash,
       });
-      log.push(`  ✓ Payment sent! tx: ${paymentResult.tx_hash}`);
 
       // Summary
       log.push(``);
@@ -1032,6 +1182,98 @@ server.tool(
       return { content: [{ type: "text" as const, text: log.join("\n") }], isError: true };
     }
   },
+);
+
+// ---------------------------------------------------------------------------
+// Tool: x811_setup_wallet — Wallet configuration diagnostics
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "x811_setup_wallet",
+  "Check wallet configuration and get setup instructions for real USDC payments.",
+  {},
+  async () => {
+    const walletMode = wallet?.mode ?? "none";
+    const walletAddress = wallet?.address ?? "N/A";
+    let walletBalance: string | number = "N/A";
+    if (wallet) {
+      try { walletBalance = await wallet.getBalance(); } catch { walletBalance = "error"; }
+    }
+
+    // Check env var status (mask values for security)
+    const envVars: Record<string, string> = {};
+    const secretKeys = ["CDP_API_KEY_SECRET", "CDP_WALLET_SECRET", "X811_PRIVATE_KEY"];
+    const envChecks = ["CDP_API_KEY_ID", "CDP_API_KEY_SECRET", "CDP_WALLET_SECRET", "X811_PRIVATE_KEY", "X811_TREASURY_ADDRESS"];
+
+    for (const key of envChecks) {
+      const val = process.env[key];
+      if (!val) {
+        envVars[key] = "missing";
+      } else if (secretKeys.includes(key)) {
+        envVars[key] = "set (***)";
+      } else if (val.length > 6) {
+        envVars[key] = `set (${val.slice(0, 3)}...${val.slice(-3)})`;
+      } else {
+        envVars[key] = "set";
+      }
+    }
+
+    const setupInstructions = walletMode === "none"
+      ? [
+          "No wallet is configured. To enable real USDC payments, choose one option:",
+          "",
+          "Option 1: Coinbase AgentKit (recommended — gasless transactions)",
+          "  Set these env vars in your MCP server config:",
+          "    CDP_API_KEY_ID=<your-cdp-key-id>",
+          "    CDP_API_KEY_SECRET=<your-cdp-key-secret>",
+          "    CDP_WALLET_SECRET=<your-wallet-secret>",
+          "  Get credentials at: https://portal.cdp.coinbase.com/",
+          "",
+          "Option 2: Raw private key (Ethers — you pay gas in ETH)",
+          "  Set this env var in your MCP server config:",
+          "    X811_PRIVATE_KEY=<your-hex-private-key>",
+          "",
+          "Optional: Set X811_TREASURY_ADDRESS for protocol fee collection.",
+          "",
+          "After setting env vars, restart Claude Code to pick up changes.",
+        ].join("\n")
+      : undefined;
+
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          wallet_mode: walletMode,
+          wallet_address: walletAddress,
+          wallet_balance_usdc: walletBalance,
+          node_version: process.versions.node,
+          env_vars: envVars,
+          ...(setupInstructions ? { setup_instructions: setupInstructions } : {}),
+        }, null, 2),
+      }],
+    };
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Tool: x811_connection_status — Show SSE/poll transport state
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "x811_connection_status",
+  "Show transport mode and connection state",
+  {},
+  async () => ({
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({
+        transport: sseClient.getMode(),
+        last_message_at: sseClient.getLastMessageAt() ?? "never",
+        buffer_size: bufferSize(),
+        server_url: SERVER_URL,
+      }, null, 2),
+    }],
+  }),
 );
 
 // ---------------------------------------------------------------------------

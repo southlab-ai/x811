@@ -44,6 +44,8 @@ export interface OfferPayload {
   terms?: string;
   /** Offer validity period in seconds. */
   expiry: number;
+  /** Provider's checksummed Ethereum address for receiving payment. */
+  payment_address?: string;
 }
 
 /** Payload for accepting a provider's offer. */
@@ -114,6 +116,24 @@ export interface PaymentPayload {
   payer_address: string;
   /** Payee's on-chain address. */
   payee_address: string;
+  /** Protocol fee transfer tx hash (nullable if fee skipped or failed). */
+  fee_tx_hash?: string;
+}
+
+/** Payload for verifying a delivered result and authorizing payment. */
+export interface VerifyPayload {
+  /** ID of the original request interaction. */
+  request_id: string;
+  /** ID of the accepted offer interaction. */
+  offer_id: string;
+  /** SHA-256 hash of the result — MUST match ResultPayload.result_hash. */
+  result_hash: string;
+  /** true = result accepted and payment authorized; false = result disputed. */
+  verified: boolean;
+  /** Human-readable dispute reason. Required if verified = false. */
+  dispute_reason?: string;
+  /** Machine-readable dispute code. Required if verified = false. */
+  dispute_code?: "WRONG_RESULT" | "INCOMPLETE" | "TIMEOUT" | "QUALITY" | "OTHER";
 }
 
 /** Payload for protocol error messages. */

@@ -8,6 +8,20 @@
 export { X811Client, type X811ClientConfig } from "./client.js";
 export { WalletService, MockWalletService } from "./wallet.js";
 
+// Wallet adapter system
+export type { WalletAdapter, WalletPayParams } from "./wallet-adapter.js";
+export {
+  EthersWalletAdapter,
+  MockWalletAdapter,
+  AgentKitWalletAdapter,
+  isValidPaymentAddress,
+} from "./wallet-adapter.js";
+export { createWalletAdapter } from "./wallet-factory.js";
+
+// Payment utilities
+export type { FeePaymentParams } from "./payment-utils.js";
+export { preflightBalanceCheck, executePaymentWithFee } from "./payment-utils.js";
+
 // Re-export commonly used types from @x811/core
 export type {
   // DID types
@@ -27,6 +41,7 @@ export type {
   RejectPayload,
   RejectReasonCode,
   ResultPayload,
+  VerifyPayload,
   PaymentPayload,
   ErrorPayload,
   AcceptancePolicy,

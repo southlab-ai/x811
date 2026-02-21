@@ -16,6 +16,7 @@ import { config } from "./config.js";
 import { Database } from "./db/schema.js";
 import { RegistryService } from "./services/registry.js";
 import { MessageRouterService } from "./services/router.js";
+import { SSEManager } from "./services/sse-manager.js";
 import { NegotiationService } from "./services/negotiation.js";
 import { TrustService } from "./services/trust.js";
 import { BatchingService } from "./services/batching.js";
@@ -27,6 +28,7 @@ import {
 
 import agentRoutes from "./routes/agents.js";
 import messageRoutes from "./routes/messages.js";
+import sseRoutes from "./routes/sse.js";
 import verifyRoutes from "./routes/verify.js";
 import wellKnownRoutes from "./routes/well-known.js";
 
@@ -43,6 +45,7 @@ declare module "fastify" {
     trust: TrustService;
     batching: BatchingService;
     relayer: IRelayerService;
+    sseManager: SSEManager;
     startedAt: number;
   }
 }
@@ -99,6 +102,12 @@ export async function buildApp(
   const db = new Database(dbPath);
 
   // -----------------------------------------------------------------------
+  // SSE Manager (before services so it can be injected into MessageRouter)
+  // -----------------------------------------------------------------------
+
+  const sseManager = new SSEManager();
+
+  // -----------------------------------------------------------------------
   // Services
   // -----------------------------------------------------------------------
 
@@ -123,7 +132,7 @@ export async function buildApp(
     timeThresholdMs: config.batchTimeThresholdMs,
   });
   const registry = new RegistryService(db, trust);
-  const messageRouter = new MessageRouterService(db);
+  const messageRouter = new MessageRouterService(db, sseManager);
   const negotiation = new NegotiationService(db, messageRouter, batching, trust);
 
   // -----------------------------------------------------------------------
@@ -137,6 +146,7 @@ export async function buildApp(
   app.decorate("trust", trust);
   app.decorate("batching", batching);
   app.decorate("relayer", relayer);
+  app.decorate("sseManager", sseManager);
   app.decorate("startedAt", Date.now());
 
   // -----------------------------------------------------------------------
@@ -145,6 +155,7 @@ export async function buildApp(
 
   await app.register(agentRoutes);
   await app.register(messageRoutes);
+  await app.register(sseRoutes);
   await app.register(verifyRoutes);
   await app.register(wellKnownRoutes);
 

@@ -20,6 +20,9 @@ services:
     volumes:
       - x811-data:/data
     restart: unless-stopped
+    labels:
+      # SSE support: disable proxy buffering so events stream in real time
+      - "traefik.http.middlewares.x811-sse.headers.customresponseheaders.X-Accel-Buffering=no"
     healthcheck:
       test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:3811/health"]
       interval: 30s

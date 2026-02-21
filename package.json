@@ -20,10 +20,12 @@
     "test:contract": "cd packages/contracts && forge test",
     "demo": "tsx demo/run-demo.ts",
     "clean": "turbo run clean",
-    "bundle:plugin": "node scripts/bundle-plugin.mjs"
+    "bundle:plugin": "node scripts/bundle-plugin.mjs",
+    "validate:rfc": "node scripts/validate-rfc.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "ajv": "^8.18.0",
     "esbuild": "^0.27.3",
     "eslint": "^9.0.0",
     "prettier": "^3.4.0",
@@ -33,7 +35,7 @@
     "vitest": "^3.0.0"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "packageManager": "npm@10.0.0"
 }

@@ -8,6 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { Database, MessageRow } from "../db/schema.js";
+import type { SSEManager } from "./sse-manager.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -50,7 +51,7 @@ export interface SendResult {
 // ---------------------------------------------------------------------------
 
 export class MessageRouterService {
-  constructor(private db: Database) {}
+  constructor(private db: Database, private sseManager?: SSEManager) {}
 
   /**
    * Send a signed envelope from one agent to another.
@@ -97,7 +98,10 @@ export class MessageRouterService {
       expires_at: expiresAt,
     });
 
-    // 4. Determine delivery status based on recipient availability
+    // 4. Push to SSE connections if any are active
+    this.sseManager?.emit(recipient.id, messageId, envelope);
+
+    // 5. Determine delivery status based on recipient availability
     const recipientAvailability = recipient.availability;
     const status: "delivered" | "queued" =
       recipientAvailability === "online" ? "queued" : "queued";
@@ -143,6 +147,23 @@ export class MessageRouterService {
     }
 
     return envelopes;
+  }
+
+  /**
+   * Get queued messages for an agent without marking them as delivered.
+   * Used by SSE route to replay undelivered messages on reconnect.
+   */
+  getQueuedMessages(did: string): Envelope[] {
+    const messages = this.db.getMessagesByRecipient(did, "queued");
+    return messages
+      .map((msg) => {
+        try {
+          return JSON.parse(msg.envelope) as Envelope;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean) as Envelope[];
   }
 
   /**
