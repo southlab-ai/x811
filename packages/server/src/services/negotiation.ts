@@ -494,14 +494,24 @@ export class NegotiationService {
       throw new NegotiationError("X811-5001", "Missing tx_hash in payment payload");
     }
 
+    // Coerce amount to number (MCP clients may send strings)
+    const paymentAmount = typeof payload.amount === "string"
+      ? parseFloat(payload.amount as unknown as string)
+      : payload.amount;
+    if (isNaN(paymentAmount)) {
+      throw new NegotiationError("X811-5001", "Invalid payment amount: not a valid number", {
+        amount: payload.amount,
+      });
+    }
+
     // Validate amount matches the offer
     if (interaction.offer_payload) {
       const offerPayload = JSON.parse(interaction.offer_payload) as OfferPayload;
       const expectedAmount = parseFloat(offerPayload.total_cost);
-      if (Math.abs(payload.amount - expectedAmount) > 0.000001) {
+      if (Math.abs(paymentAmount - expectedAmount) > 0.000001) {
         throw new NegotiationError("X811-5003", "Payment amount does not match offer total", {
           expected: expectedAmount,
-          actual: payload.amount,
+          actual: paymentAmount,
         });
       }
     }
@@ -510,7 +520,7 @@ export class NegotiationService {
       status: "completed",
       outcome: "success",
       payment_tx: payload.tx_hash,
-      payment_amount: payload.amount,
+      payment_amount: paymentAmount,
     });
 
     // Update trust scores for both agents
@@ -652,15 +662,25 @@ export class NegotiationService {
    * interaction ID or can be looked up from stored offer payloads.
    */
   private findInteractionByOfferOrRequest(offerId: string): InteractionRow {
+    // Validate offerId is a valid UUID to prevent injection
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(offerId)) {
+      throw new NegotiationError("X811-4006", "Invalid offer_id format: must be a valid UUID", {
+        offer_id: offerId,
+      });
+    }
+
     // First try as interaction ID
     let interaction = this.db.getInteraction(offerId);
     if (interaction) return interaction;
 
     // Try to find by scanning offer payloads for matching ID
+    // Escape LIKE meta-characters to prevent SQL injection via pattern matching
+    const escapedId = offerId.replace(/%/g, "\\%").replace(/_/g, "\\_");
     const stmt = this.db.raw.prepare(`
-      SELECT * FROM interactions WHERE offer_payload LIKE ?
+      SELECT * FROM interactions WHERE offer_payload LIKE ? ESCAPE '\\'
     `);
-    interaction = stmt.get(`%"request_id":"${offerId}"%`) as InteractionRow | undefined;
+    interaction = stmt.get(`%"request_id":"${escapedId}"%`) as InteractionRow | undefined;
     if (interaction) return interaction;
 
     // Try by interaction hash

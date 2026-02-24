@@ -46,6 +46,7 @@ declare module "fastify" {
     batching: BatchingService;
     relayer: IRelayerService;
     sseManager: SSEManager;
+    relayerMode: string;
     startedAt: number;
   }
 }
@@ -74,8 +75,18 @@ export async function buildApp(
   // -----------------------------------------------------------------------
 
   await app.register(cors, {
-    origin: true,
+    origin: config.nodeEnv === "production"
+      ? ["https://x811.org", "https://api.x811.org"]
+      : true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  });
+
+  // Security headers
+  app.addHook("onSend", async (_request, reply) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    if (config.nodeEnv === "production") {
+      reply.header("Content-Security-Policy", "default-src 'none'");
+    }
   });
 
   if (!overrides?.skipRateLimit) {
@@ -132,6 +143,8 @@ export async function buildApp(
     }
   }
 
+  const relayerMode = (relayer instanceof RelayerService) ? "live" : "mock";
+
   const trust = new TrustService(db);
   const batching = new BatchingService(db, relayer, {
     sizeThreshold: config.batchSizeThreshold,
@@ -153,6 +166,7 @@ export async function buildApp(
   app.decorate("batching", batching);
   app.decorate("relayer", relayer);
   app.decorate("sseManager", sseManager);
+  app.decorate("relayerMode", relayerMode);
   app.decorate("startedAt", Date.now());
 
   // -----------------------------------------------------------------------
@@ -247,11 +261,21 @@ export async function start(): Promise<void> {
     }
   }, 3_600_000);
 
+  // Start periodic negotiation TTL expiry check (every 60 seconds)
+  const expiryInterval = setInterval(() => {
+    try {
+      app.negotiation.checkExpiredInteractions();
+    } catch (err) {
+      app.log.error(err, "Error checking expired interactions");
+    }
+  }, 60_000);
+
   // Clean up intervals on close
   app.addHook("onClose", () => {
     clearInterval(heartbeatInterval);
     clearInterval(messageCleanupInterval);
     clearInterval(nonceCleanupInterval);
+    clearInterval(expiryInterval);
   });
 
   // Graceful shutdown on signals (production only)

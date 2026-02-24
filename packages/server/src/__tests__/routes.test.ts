@@ -143,6 +143,41 @@ describe("GET /health", () => {
     const body = response.json();
     expect(body.agents_count).toBe(2);
   });
+
+  it("should return relayer_mode field (mock in test env)", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/health",
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body).toHaveProperty("relayer_mode");
+    expect(body.relayer_mode).toBe("mock");
+  });
+
+  it("should return contract_address field (null in test env)", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/health",
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body).toHaveProperty("contract_address");
+    expect(body.contract_address).toBeNull();
+  });
+
+  it("should return status ok normally", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/health",
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.status).toBe("ok");
+  });
 });
 
 // ===========================================================================

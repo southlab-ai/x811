@@ -123,7 +123,6 @@ export default async function wellKnownRoutes(
       try {
         relayerBalance = await fastify.relayer.getBalance();
       } catch {
-        // If relayer is unavailable, report 0
         relayerBalance = "unavailable";
       }
 
@@ -131,15 +130,27 @@ export default async function wellKnownRoutes(
         (Date.now() - fastify.startedAt) / 1000,
       );
 
-      return reply.send({
-        status: "ok",
+      // Determine relayer mode
+      const relayerMode = fastify.relayerMode ?? "mock";
+      const contractAddress = config.contractAddress || null;
+
+      // Check for degraded state (live relayer with low gas)
+      const balanceNum = parseFloat(relayerBalance);
+      const isLowGas = relayerMode === "live" && !isNaN(balanceNum) && balanceNum < 0.001;
+
+      const payload = {
+        status: isLowGas ? "degraded" : "ok",
         version: "0.1.0",
+        relayer_mode: relayerMode,
+        relayer_balance_eth: relayerBalance,
+        contract_address: contractAddress,
         agents_count: fastify.db.getAgentCount(),
         batches_count: fastify.db.getBatchCount(),
-        relayer_balance_eth: relayerBalance,
         pending_interactions: fastify.db.getPendingInteractionCount(),
         uptime_seconds: uptimeSeconds,
-      });
+      };
+
+      return reply.status(isLowGas ? 503 : 200).send(payload);
     },
   );
 }

@@ -1017,3 +1017,209 @@ describe("BatchingService", () => {
     });
   });
 });
+
+// ===========================================================================
+// Security Hardening Tests (S1-S4)
+// ===========================================================================
+
+describe("Security Hardening", () => {
+  let negotiation: NegotiationService;
+  let router: MessageRouterService;
+  let batching: BatchingService;
+  let trust: TrustService;
+  let relayer: MockRelayerService;
+
+  beforeEach(() => {
+    router = new MessageRouterService(db);
+    relayer = new MockRelayerService();
+    trust = new TrustService(db);
+    batching = new BatchingService(db, relayer, {
+      sizeThreshold: 100,
+      timeThresholdMs: 300_000,
+    });
+    negotiation = new NegotiationService(db, router, batching, trust);
+  });
+
+  function makeEnvelope(
+    type: string,
+    from: string,
+    to: string,
+    payload: unknown,
+  ) {
+    return {
+      version: "0.1.0" as const,
+      id: randomUUID(),
+      type,
+      from,
+      to,
+      created: new Date().toISOString(),
+      payload,
+      signature: "test-signature",
+      nonce: randomUUID(),
+    };
+  }
+
+  /** Helper: drive negotiation to "verified" state and return interactionId + totalCost */
+  async function driveToVerified() {
+    const initiator = createTestAgent();
+    const provider = createTestAgent();
+    const idempotencyKey = randomUUID();
+
+    const requestEnv = makeEnvelope("x811/request", initiator.did, provider.did, {
+      task_type: "analysis",
+      parameters: {},
+      max_budget: 1.0,
+      currency: "USDC",
+      deadline: 3600,
+      acceptance_policy: "auto",
+      idempotency_key: idempotencyKey,
+    });
+    const requestResult = await negotiation.handleRequest(requestEnv);
+    const interactionId = requestResult.interaction_id;
+
+    const price = 0.03;
+    const protocolFee = Math.round(price * 0.025 * 1_000_000) / 1_000_000;
+    const totalCost = Math.round((price + protocolFee) * 1_000_000) / 1_000_000;
+
+    await negotiation.handleOffer(
+      makeEnvelope("x811/offer", provider.did, initiator.did, {
+        request_id: interactionId,
+        price: price.toString(),
+        protocol_fee: protocolFee.toString(),
+        total_cost: totalCost.toString(),
+        currency: "USDC",
+        estimated_time: 30,
+        deliverables: ["report"],
+        expiry: 300,
+      }),
+    );
+
+    const interaction = db.getInteraction(interactionId);
+    const { sha256 } = require("@noble/hashes/sha256");
+    const { bytesToHex } = require("@noble/hashes/utils");
+    const offerHash = bytesToHex(
+      sha256(new TextEncoder().encode(interaction!.offer_payload!)),
+    );
+
+    await negotiation.handleAccept(
+      makeEnvelope("x811/accept", initiator.did, provider.did, {
+        offer_id: interactionId,
+        offer_hash: offerHash,
+      }),
+    );
+
+    await negotiation.handleResult(
+      makeEnvelope("x811/result", provider.did, initiator.did, {
+        request_id: interactionId,
+        offer_id: interactionId,
+        content: "result",
+        content_type: "text/plain",
+        result_hash: "hash123",
+        execution_time_ms: 100,
+      }),
+    );
+
+    await negotiation.handleVerify(
+      makeEnvelope("x811/verify", initiator.did, provider.did, {
+        request_id: interactionId,
+        result_hash: "hash123",
+        verified: true,
+      }),
+    );
+
+    return { initiator, provider, interactionId, totalCost };
+  }
+
+  describe("S1: SQL injection prevention in findInteractionByOfferOrRequest", () => {
+    it("should reject offer_id containing SQL injection characters (not a UUID)", async () => {
+      await expect(
+        negotiation.handleAccept(
+          makeEnvelope("x811/accept", "did:x811:a", "did:x811:b", {
+            offer_id: '%" OR 1=1 --',
+            offer_hash: "test",
+          }),
+        ),
+      ).rejects.toThrow(/Invalid offer_id format/);
+    });
+
+    it("should reject offer_id with LIKE wildcards (not a UUID)", async () => {
+      await expect(
+        negotiation.handleAccept(
+          makeEnvelope("x811/accept", "did:x811:a", "did:x811:b", {
+            offer_id: "%_%_%",
+            offer_hash: "test",
+          }),
+        ),
+      ).rejects.toThrow(/Invalid offer_id format/);
+    });
+
+    it("should reject offer_id with underscore wildcards (not a UUID)", async () => {
+      await expect(
+        negotiation.handleReject(
+          makeEnvelope("x811/reject", "did:x811:a", "did:x811:b", {
+            offer_id: "____-____-____-____-____________",
+            offer_hash: "test",
+          }),
+        ),
+      ).rejects.toThrow(/Invalid offer_id format/);
+    });
+  });
+
+  describe("S3: Payment amount type safety", () => {
+    it("should accept payment amount as a string and coerce to number", async () => {
+      const { initiator, provider, interactionId, totalCost } = await driveToVerified();
+
+      const paymentEnv = makeEnvelope("x811/payment", initiator.did, provider.did, {
+        request_id: interactionId,
+        offer_id: interactionId,
+        tx_hash: "0xabc123",
+        amount: totalCost.toString(), // string instead of number
+        currency: "USDC",
+        network: "base",
+        payer_address: "0xpayer",
+        payee_address: "0xpayee",
+      });
+
+      const result = await negotiation.handlePayment(paymentEnv);
+      expect(result.status).toBe("completed");
+    });
+
+    it("should reject payment with non-numeric amount string", async () => {
+      const { initiator, provider, interactionId } = await driveToVerified();
+
+      const paymentEnv = makeEnvelope("x811/payment", initiator.did, provider.did, {
+        request_id: interactionId,
+        offer_id: interactionId,
+        tx_hash: "0xabc123",
+        amount: "not-a-number",
+        currency: "USDC",
+        network: "base",
+        payer_address: "0xpayer",
+        payee_address: "0xpayee",
+      });
+
+      await expect(negotiation.handlePayment(paymentEnv)).rejects.toThrow(
+        /Invalid payment amount/,
+      );
+    });
+
+    it("should reject payment with NaN amount", async () => {
+      const { initiator, provider, interactionId } = await driveToVerified();
+
+      const paymentEnv = makeEnvelope("x811/payment", initiator.did, provider.did, {
+        request_id: interactionId,
+        offer_id: interactionId,
+        tx_hash: "0xabc123",
+        amount: "abc",
+        currency: "USDC",
+        network: "base",
+        payer_address: "0xpayer",
+        payee_address: "0xpayee",
+      });
+
+      await expect(negotiation.handlePayment(paymentEnv)).rejects.toThrow(
+        /Invalid payment amount: not a valid number/,
+      );
+    });
+  });
+});

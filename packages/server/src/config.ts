@@ -36,6 +36,9 @@ export interface ServerConfig {
   /** Write endpoints: max requests per minute per DID */
   rateLimitWrite: number;
 
+  /** Treasury wallet address for protocol fee collection */
+  treasuryAddress: string;
+
   /** Public domain for the server (used in DID documents) */
   serverDomain: string;
   /** DID domain (used in did:web identifiers) */
@@ -75,6 +78,8 @@ export const config: ServerConfig = {
 
   rateLimitRead: envInt("RATE_LIMIT_READ", 100),
   rateLimitWrite: envInt("RATE_LIMIT_WRITE", 20),
+
+  treasuryAddress: envStr("TREASURY_ADDRESS", ""),
 
   serverDomain: envStr("SERVER_DOMAIN", "api.x811.org"),
   didDomain: envStr("DID_DOMAIN", "x811.org"),
