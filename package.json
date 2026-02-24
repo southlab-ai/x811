@@ -26,11 +26,13 @@
     "bench:report": "vitest bench --config benchmarks/vitest.config.ts --reporter=json > benchmarks/benchmark-results.json && node --import tsx benchmarks/report-generator.ts"
   },
   "devDependencies": {
+    "@openzeppelin/contracts": "^5.0.0",
     "@types/node": "^22.0.0",
     "ajv": "^8.18.0",
     "esbuild": "^0.27.3",
     "eslint": "^9.0.0",
     "prettier": "^3.4.0",
+    "solc": "^0.8.24",
     "tsx": "^4.19.0",
     "turbo": "^2.3.0",
     "typescript": "^5.7.0",
