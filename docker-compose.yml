@@ -17,14 +17,23 @@ services:
       BASE_RPC_URL: ${BASE_RPC_URL:-https://mainnet.base.org}
       CONTRACT_ADDRESS: ${CONTRACT_ADDRESS:-}
       RELAYER_PRIVATE_KEY: ${RELAYER_PRIVATE_KEY:-}
+      SERVER_DOMAIN: ${SERVER_DOMAIN:-api.x811.org}
+      DID_DOMAIN: ${DID_DOMAIN:-x811.org}
     volumes:
       - x811-data:/data
     restart: unless-stopped
     labels:
+      # Traefik routing
+      - "traefik.enable=true"
+      - "traefik.http.routers.x811.rule=Host(`api.x811.org`)"
+      - "traefik.http.routers.x811.entrypoints=websecure"
+      - "traefik.http.routers.x811.tls.certresolver=letsencrypt"
+      - "traefik.http.services.x811.loadbalancer.server.port=3811"
       # SSE support: disable proxy buffering so events stream in real time
       - "traefik.http.middlewares.x811-sse.headers.customresponseheaders.X-Accel-Buffering=no"
+      - "traefik.http.routers.x811.middlewares=x811-sse"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:3811/health"]
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3811/health"]
       interval: 30s
       timeout: 5s
       start_period: 10s

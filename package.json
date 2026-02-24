@@ -21,7 +21,9 @@
     "demo": "tsx demo/run-demo.ts",
     "clean": "turbo run clean",
     "bundle:plugin": "node scripts/bundle-plugin.mjs",
-    "validate:rfc": "node scripts/validate-rfc.mjs"
+    "validate:rfc": "node scripts/validate-rfc.mjs",
+    "bench": "vitest bench --config benchmarks/vitest.config.ts",
+    "bench:report": "vitest bench --config benchmarks/vitest.config.ts --reporter=json > benchmarks/benchmark-results.json && node --import tsx benchmarks/report-generator.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

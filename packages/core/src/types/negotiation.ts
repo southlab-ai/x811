@@ -44,8 +44,8 @@ export interface OfferPayload {
   terms?: string;
   /** Offer validity period in seconds. */
   expiry: number;
-  /** Provider's checksummed Ethereum address for receiving payment. */
-  payment_address?: string;
+  /** Provider's checksummed Ethereum address for receiving payment. REQUIRED per RFC S.8.2. */
+  payment_address: string;
 }
 
 /** Payload for accepting a provider's offer. */

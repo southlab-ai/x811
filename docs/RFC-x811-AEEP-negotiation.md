@@ -1,9 +1,9 @@
 # x811 Agent Economic Execution Protocol (AEEP) — Negotiation Layer Specification
 
-**Document ID:** x811-AEEP-v0.1.0
-**Version:** 0.1.0
+**Document ID:** x811-AEEP-v0.2.1
+**Version:** 0.2.1
 **Status:** draft-experimental
-**Date:** 2026-02-20
+**Date:** 2026-02-23
 **Repository:** https://github.com/southlab-ai/x811
 
 ---
@@ -18,7 +18,7 @@ The x811 Agent Economic Execution Protocol (AEEP) defines a negotiation layer fo
 
 This document specifies an experimental protocol for the x811 ecosystem. It is published for discussion and evaluation purposes. This is NOT an Internet Engineering Task Force (IETF) standard. It has not been submitted for IETF review and does not represent the consensus of any standards body.
 
-**Version:** 0.1.0 (draft-experimental)
+**Version:** 0.2.1 (draft-experimental)
 
 **Distribution:** Unlimited. This document may be freely distributed and referenced.
 
@@ -35,17 +35,36 @@ Implementors should be aware that this specification is subject to change. Feedb
 5. [Terminology](#5-terminology)
 6. [Protocol Architecture](#6-protocol-architecture)
 7. [State Machine (Normative)](#7-state-machine-normative)
+   - 7.0 [Interaction Identity](#70-interaction-identity)
+   - 7.1 [States](#71-states)
+   - 7.2 [Transition Table](#72-transition-table)
+   - 7.3 [Invalid Transitions](#73-invalid-transitions)
+   - 7.4 [State Diagram](#74-state-diagram)
+   - 7.5 [Offer Expiry Computation](#75-offer-expiry-computation)
 8. [Message Types (Normative)](#8-message-types-normative)
+   - 8.9 [Extension Message Types](#89-extension-message-types)
 9. [Cryptographic Envelope (Normative)](#9-cryptographic-envelope-normative)
+   - 9.1 [Envelope Structure](#91-envelope-structure)
+   - 9.2 [Field Requirements](#92-field-requirements)
+   - 9.3 [Signature Computation](#93-signature-computation)
+   - 9.4 [Verification Procedure](#94-verification-procedure)
+   - 9.5 [x811 Canonical JSON (Normative)](#95-x811-canonical-json-normative)
+   - 9.6 [End-to-End Signing Test Vector](#96-end-to-end-signing-test-vector)
 10. [Security Requirements (Normative)](#10-security-requirements-normative)
+    - 10.1–10.6 [Core Requirements](#101-nonce-replay-protection)
+    - 10.7 [Algorithm Allowlist](#107-algorithm-allowlist)
+    - 10.8 [Key Management and Rotation](#108-key-management-and-rotation)
 11. [Timing Requirements (Normative)](#11-timing-requirements-normative)
 12. [Error Code Registry (Normative)](#12-error-code-registry-normative)
 13. [Acceptance Policy Semantics (Normative)](#13-acceptance-policy-semantics-normative)
 14. [Extensibility Rules (Normative)](#14-extensibility-rules-normative)
+    - 14.4 [Conformance Levels](#144-conformance-levels)
 15. [Relationship to Other Standards](#15-relationship-to-other-standards)
 16. [References](#16-references)
 17. [Appendix A: SSE Transport (Informative)](#17-appendix-a-sse-transport-informative)
 18. [Appendix B: Implementation Notes (Informative)](#18-appendix-b-implementation-notes-informative)
+19. [Appendix C: Message Delivery Interface (Normative)](#19-appendix-c-message-delivery-interface-normative)
+20. [Appendix D: did:x811 Method Specification (Normative)](#20-appendix-d-didx811-method-specification-normative)
 
 ---
 
@@ -120,6 +139,10 @@ x811 AEEP operates as Layer 3 in a four-layer protocol stack:
 
 ## 7. State Machine (Normative)
 
+### 7.0 Interaction Identity
+
+When a server processes a REQUEST envelope, it MUST assign a unique **Interaction ID** (UUID) to the new interaction and return it in the `202 Accepted` response body as `{"interaction_id":"<uuid>"}`. The REQUEST payload's `idempotency_key` field is used solely for duplicate detection — if a REQUEST with the same `idempotency_key` has already been processed, the server MUST return the existing interaction ID without creating a new interaction. All subsequent messages in the same interaction (OFFER, ACCEPT, RESULT, VERIFY, PAYMENT) reference the server-assigned Interaction ID in their `request_id` field.
+
 ### 7.1 States
 
 An interaction MUST be in exactly one of the following 10 states at any given time:
@@ -141,16 +164,16 @@ An interaction MUST be in exactly one of the following 10 states at any given ti
 
 | From State | Triggering Message | To State | Guard Conditions | Error If Invalid |
 |---|---|---|---|---|
-| `pending` | x811/offer (from provider) | `offered` | offer.price MUST NOT exceed request.max_budget; offer.expiry MUST be a positive integer | X811-4001 |
-| `offered` | x811/accept (from initiator) | `accepted` | Offer MUST NOT be expired; accept.offer_hash MUST match SHA-256 of canonical OFFER payload | X811-4001, X811-4010 |
+| `pending` | x811/offer (from provider) | `offered` | offer.total_cost MUST NOT exceed request.max_budget; offer.payment_address MUST be a valid checksummed Ethereum address; offer.expiry MUST be a positive integer | X811-4001 |
+| `offered` | x811/accept (from initiator) | `accepted` | Effective offer expiry (Section 7.5) MUST NOT have elapsed; accept.offer_hash MUST match SHA-256 of x811 Canonical JSON (Section 9.5) OFFER payload | X811-4001, X811-4010, X811-4021 |
 | `offered` | x811/reject (from initiator) | `rejected` | None | X811-4001 |
 | `offered` | TTL expired (5 min offer window) | `expired` | Automatic; server background check | X811-4021 |
-| `accepted` | x811/result (from provider) | `delivered` | Offer MUST NOT be expired; result_hash MUST be present | X811-4001 |
+| `accepted` | x811/result (from provider) | `delivered` | result_hash MUST be present | X811-4001 |
 | `accepted` | TTL expired (1 hour result window) | `expired` | Automatic; server background check | X811-4022 |
 | `delivered` | x811/verify (verified=true, from initiator) | `verified` | verify.result_hash MUST match result.result_hash | X811-6001 |
 | `delivered` | x811/verify (verified=false, from initiator) | `disputed` | dispute_reason and dispute_code MUST be present | X811-4001 |
 | `delivered` | TTL expired (30 second verify window) | `failed` | Automatic; server background check | X811-4023 |
-| `verified` | x811/payment (from initiator) | `completed` | payment.amount MUST be greater than or equal to offer.total_cost; tx_hash MUST be present and valid | X811-5001 |
+| `verified` | x811/payment (from initiator) | `completed` | payment.amount MUST be greater than or equal to offer.total_cost (overpayment is permitted to accommodate rounding in multi-transfer settlement); tx_hash MUST be present and valid | X811-5001 |
 | `verified` | TTL expired (60 second payment window) | `disputed` | Automatic; server background check | X811-4024 |
 
 ### 7.3 Invalid Transitions
@@ -163,13 +186,15 @@ The following transitions MUST be rejected by a compliant server. The server MUS
 | Any message | `expired` | X811-4001 |
 | Any message | `rejected` | X811-4001 |
 | Any message | `failed` | X811-4001 |
-| Any message (except future dispute resolution) | `disputed` | X811-4001 |
+| Any message | `disputed` | X811-4001 |
 | x811/offer | Any state other than `pending` | X811-4001 |
 | x811/accept | Any state other than `offered` | X811-4001 |
 | x811/reject | Any state other than `offered` | X811-4001 |
 | x811/result | Any state other than `accepted` | X811-4001 |
 | x811/verify | Any state other than `delivered` | X811-4001 |
 | x811/payment | Any state other than `verified` | X811-4001 |
+
+**Note on disputed state:** Interactions in the `disputed` state require off-protocol resolution. Dispute resolution messages are not defined in AEEP v0.2.1 and will be specified in a future version. Parties in this state MUST resolve disputes via out-of-band mechanisms.
 
 ### 7.4 State Diagram
 
@@ -203,6 +228,21 @@ The following transitions MUST be rejected by a compliant server. The server MUS
                                     | disputed|
                                     +---------+
 ```
+
+### 7.5 Offer Expiry Computation
+
+The effective offer expiry is determined by the earlier of two deadlines:
+
+1. **Provider-declared expiry:** `offer.envelope.created + offer.payload.expiry` (in seconds)
+2. **Server OFFER TTL cap:** `offer.envelope.created + 300` seconds (5-minute maximum)
+
+The server MUST enforce whichever deadline is earlier:
+
+```
+effective_expiry = min(offer.envelope.created + offer.payload.expiry, offer.envelope.created + 300)
+```
+
+An ACCEPT received after the `effective_expiry` MUST be rejected with X811-4021 (OFFER_EXPIRED). The provider's self-declared `expiry` field MUST NOT exceed the server OFFER TTL cap; if it does, the server MUST silently apply the cap.
 
 ---
 
@@ -300,7 +340,7 @@ The provider responds to a REQUEST with an OFFER containing a binding price, est
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "x811/offer",
   "type": "object",
-  "required": ["request_id", "price", "protocol_fee", "total_cost", "currency", "estimated_time", "deliverables", "expiry"],
+  "required": ["request_id", "price", "protocol_fee", "total_cost", "currency", "estimated_time", "deliverables", "expiry", "payment_address"],
   "properties": {
     "request_id": {
       "type": "string",
@@ -390,7 +430,7 @@ The initiator accepts a provider's OFFER, authorizing the provider to begin work
     },
     "offer_hash": {
       "type": "string",
-      "description": "SHA-256 hex digest of the RFC 8785 canonicalized OFFER payload, ensuring integrity"
+      "description": "SHA-256 hex digest of the x811 Canonical JSON (Section 9.5) serialized OFFER payload, ensuring integrity"
     }
   },
   "additionalProperties": true
@@ -488,7 +528,7 @@ The provider delivers the task result to the initiator after completing the work
     },
     "result_hash": {
       "type": "string",
-      "description": "SHA-256 hex digest of the result content for integrity verification"
+      "description": "SHA-256 hex digest for integrity verification. When content is inline, the hash MUST be computed over the UTF-8 bytes of the `content` field value (the string as-is, not re-serialized). When content is delivered via result_url, the hash MUST be computed over the HTTP response body bytes."
     },
     "execution_time_ms": {
       "type": "integer",
@@ -507,6 +547,10 @@ The provider delivers the task result to the initiator after completing the work
   "additionalProperties": true
 }
 ```
+
+**Constraint:** A RESULT message MUST include at least one of `content` or `result_url`. A server MUST reject a RESULT payload that contains neither with X811-9002 (INTERNAL_ERROR on parse) or X811-6002 if validation occurs at the schema layer.
+
+Note: This mutual-inclusion constraint cannot be expressed in JSON Schema draft-07 without `if/then` or `oneOf` constructs. Implementations MUST enforce this requirement at the application layer, not solely through schema validation.
 
 **Example:**
 
@@ -625,8 +669,7 @@ The initiator confirms payment to the provider after successful verification.
     },
     "network": {
       "type": "string",
-      "const": "base",
-      "description": "Settlement network identifier"
+      "description": "Settlement network identifier. For AEEP v0.2.1 compliant implementations, MUST be 'base'. Additional network identifiers MAY be defined in future minor versions as additional values in this field."
     },
     "payer_address": {
       "type": "string",
@@ -701,6 +744,15 @@ An error message sent by either party or the server to indicate a protocol viola
 }
 ```
 
+### 8.9 Extension Message Types
+
+The following message types are used by the x811 reference implementation but are NOT part of the core AEEP negotiation protocol. They are listed here for completeness:
+
+- `x811/cancel` — Cancels an in-progress interaction. Semantics are implementation-defined. Servers SHOULD transition the interaction to `failed` upon receiving a cancel from either party.
+- `x811/heartbeat` — Signals agent availability to the registry. See [Appendix C, Section 19.4](#194-agent-status).
+
+Custom extension types MUST follow the namespacing rules in [Section 14.3](#143-custom-message-types).
+
 ---
 
 ## 9. Cryptographic Envelope (Normative)
@@ -747,12 +799,11 @@ The signature MUST be computed as follows:
    ```
    { version, id, type, from, to, created, expires, nonce, payload }
    ```
-2. Apply **RFC 8785 JSON Canonicalization Scheme** to the signable object, producing a deterministic byte sequence.
-3. Compute the **SHA-256 hash** of the canonicalized bytes.
-4. Sign the SHA-256 hash using the sender's **Ed25519 private key**.
-5. Encode the resulting signature as **Base64url** (RFC 4648, Section 5, no padding).
+2. Apply **x811 Canonical JSON** (defined in [Section 9.5](#95-x811-canonical-json-normative)) to the signable object, producing a deterministic UTF-8 byte sequence.
+3. Sign the canonical bytes **directly** using the sender's **Ed25519 private key**. No external SHA-256 step is applied; Ed25519 (RFC 8032) applies an internal hash function over the input bytes.
+4. Encode the resulting 64-byte signature as **Base64url** (RFC 4648, Section 5, no padding).
 
-**Algorithm:** Ed25519 is RECOMMENDED. Other signature algorithms MAY be used if the algorithm is listed in the sender's DID document under the `verificationMethod` property.
+**Algorithm:** Compliant implementations MUST support Ed25519 (RFC 8032). Ed25519 is the mandatory-to-implement signing algorithm. Servers MUST maintain an algorithm allowlist (see [Section 10.7](#107-algorithm-allowlist)); envelopes using algorithms not on the allowlist MUST be rejected with X811-2003.
 
 ### 9.4 Verification Procedure
 
@@ -760,12 +811,83 @@ A receiver MUST verify each incoming envelope using the following procedure:
 
 1. **Decode** the `signature` field from Base64url.
 2. **Construct** the signable object (all envelope fields except `signature`).
-3. **Canonicalize** the signable object using RFC 8785.
-4. **Compute** the SHA-256 hash of the canonicalized bytes.
-5. **Resolve** the sender's DID document from the registry.
-6. **Verify** the Ed25519 signature over the SHA-256 hash using the public key from the sender's DID document.
+3. **Canonicalize** the signable object using x811 Canonical JSON (Section 9.5).
+4. **Resolve** the sender's DID document from the x811 registry (see [Appendix D](#20-appendix-d-didx811-method-specification-normative)).
+5. **Verify** the Ed25519 signature over the canonical bytes using the public key from the sender's DID document.
 
 If verification fails, the receiver MUST reject the envelope with error code X811-2003.
+
+### 9.5 x811 Canonical JSON (Normative)
+
+x811 Canonical JSON is a deterministic JSON serialization algorithm used for signature computation. It defines a precise subset of [RFC 8785] for objects containing string, integer, finite float, boolean, null, array, or object values.
+
+**Algorithm:**
+
+1. **Object:** Collect all key-value pairs. Sort keys lexicographically by Unicode code point (ascending). Recursively apply this algorithm to each value. Serialize as `{"key1":value1,"key2":value2,...}` with no whitespace between tokens.
+2. **Array:** Apply this algorithm to each element in original order. Serialize as `[elem1,elem2,...]` with no whitespace.
+3. **String:** Serialize as a JSON string (RFC 8259 §7) with mandatory `\uXXXX` escaping for code points U+0000–U+001F. Forward slashes MUST NOT be escaped. Unicode characters outside the BMP SHOULD be encoded as UTF-8 sequences.
+4. **Integer:** Serialize as the decimal integer string with no leading zeros or fractional part (e.g., `42`).
+5. **Finite float:** Serialize using the shortest decimal representation that round-trips without loss (equivalent to ECMAScript `Number.prototype.toString`).
+6. **Boolean:** Serialize as `true` or `false`.
+7. **Null:** Serialize as `null`.
+8. **Prohibited values:** `NaN`, `Infinity`, and `-0` MUST NOT appear in AEEP message payloads. If encountered during canonicalization, the implementation MUST abort with X811-9002.
+
+**Test vectors:**
+
+| Input (JSON) | x811 Canonical JSON output |
+|---|---|
+| `{"b":2,"a":1}` | `{"a":1,"b":2}` |
+| `{"z":"hello","a":true}` | `{"a":true,"z":"hello"}` |
+| `{"payload":{"task_type":"analysis"},"nonce":"abc"}` | `{"nonce":"abc","payload":{"task_type":"analysis"}}` |
+
+Note: x811 Canonical JSON is compatible with RFC 8785 for the value types defined above. Implementations using a full RFC 8785 library will produce identical output for AEEP payloads. Implementations using `JSON.stringify` after recursive key sorting MUST verify their output matches these test vectors, particularly for Unicode edge cases.
+
+### 9.6 End-to-End Signing Test Vector
+
+The following test vector demonstrates the full signing pipeline: envelope construction → x811 Canonical JSON → Ed25519 sign → Base64url encode. Implementors SHOULD verify that their pipeline produces identical canonical output for the given input.
+
+**Test input** (envelope without signature, keys sorted for readability):
+
+```json
+{
+  "version": "0.1.0",
+  "id": "0190a1b2-c3d4-7e5f-8901-234567890abc",
+  "type": "x811/request",
+  "from": "did:x811:019c8c61-8129-7511-9f31-aa5142e65448",
+  "to": "did:x811:00000000-0000-0000-0000-000000000000",
+  "created": "2026-01-01T00:00:00.000Z",
+  "nonce": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "payload": {
+    "task_type": "financial-analysis",
+    "parameters": { "ticker": "ETH" },
+    "max_budget": 0.05,
+    "currency": "USDC",
+    "deadline": 60,
+    "acceptance_policy": "auto",
+    "idempotency_key": "test-key-001"
+  }
+}
+```
+
+**Step 1 — x811 Canonical JSON output** (single line, keys sorted lexicographically):
+
+```
+{"created":"2026-01-01T00:00:00.000Z","from":"did:x811:019c8c61-8129-7511-9f31-aa5142e65448","id":"0190a1b2-c3d4-7e5f-8901-234567890abc","nonce":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","payload":{"acceptance_policy":"auto","currency":"USDC","deadline":60,"idempotency_key":"test-key-001","max_budget":0.05,"parameters":{"ticker":"ETH"},"task_type":"financial-analysis"},"to":"did:x811:00000000-0000-0000-0000-000000000000","type":"x811/request","version":"0.1.0"}
+```
+
+**Step 2 — Ed25519 signing key** (hex-encoded 32-byte public key):
+
+```
+548233b71e069d540efdfa78b23c1104d13331abf81bb14106a2e0bba8940b06
+```
+
+**Step 3 — Signature** (Base64url, no padding):
+
+```
+sQZf1a_5zcUJc7Blo1cy-GCE2xIiTxN7Vol3EffRS60UIHgClkHK3_1uvMvbYI48GSL0-yXH5bON9oYf-lnnBA
+```
+
+**Verification:** An implementation that produces the same canonical JSON in Step 1 and successfully verifies the signature against the public key is correctly implementing the signing pipeline. Note that the signature itself is key-dependent — implementations using different keys will produce different signatures but MUST produce identical canonical JSON output.
 
 ---
 
@@ -783,11 +905,13 @@ The server MUST reject any envelope whose `created` timestamp is more than 5 min
 
 ### 10.3 Offer Integrity
 
-When processing an x811/accept message, the server MUST verify that the `offer_hash` field in the ACCEPT payload equals the SHA-256 hex digest of the RFC 8785 canonicalized OFFER payload. If the hashes do not match, the server MUST reject the message with error code **X811-4010** (OFFER_HASH_MISMATCH). This prevents the initiator from accepting a different offer than the one the provider sent.
+When processing an x811/accept message, the server MUST verify that the `offer_hash` field in the ACCEPT payload equals the SHA-256 hex digest of the x811 Canonical JSON (Section 9.5) serialized OFFER payload. If the hashes do not match, the server MUST reject the message with error code **X811-4010** (OFFER_HASH_MISMATCH). This prevents the initiator from accepting a different offer than the one the provider sent.
 
 ### 10.4 DID Ownership
 
 The server MUST verify that the public key used to sign an envelope is present in the sender's current DID document. The server MUST resolve the DID document at verification time (or use a cached version no older than 5 minutes). If the DID is expired, revoked, or deactivated, the server MUST reject the envelope with error code **X811-2003** (SIGNATURE_INVALID). If the signing key is not present in the resolved DID document, the server MUST also reject with X811-2003.
+
+When an envelope fails signature verification against a cached DID document, the server MUST invalidate the cache entry and re-resolve the DID document before issuing a final rejection. This ensures that key rotation events are detected promptly rather than causing false rejections during the cache window.
 
 ### 10.5 State Sequence Enforcement
 
@@ -796,6 +920,22 @@ The server MUST enforce the state machine defined in [Section 7](#7-state-machin
 ### 10.6 Verify-Result Hash Validation
 
 When processing an x811/verify message, the server MUST verify that the `result_hash` field in the VERIFY payload equals the `result_hash` field from the corresponding RESULT message stored for the interaction. If the hashes do not match, the server MUST reject the message with error code **X811-6001** (RESULT_HASH_MISMATCH).
+
+### 10.7 Algorithm Allowlist
+
+The server MUST maintain an algorithm allowlist for acceptable signing algorithms. The v0.2.1 allowlist contains exactly one entry: **Ed25519** (RFC 8032). All compliant implementations MUST support Ed25519.
+
+Servers MUST reject envelopes using algorithms not on the allowlist with error code **X811-2003** (SIGNATURE_INVALID). No algorithm negotiation protocol is defined in this version; senders MUST use Ed25519 unless both parties have agreed through an out-of-band mechanism to use an additional algorithm. New algorithm additions require a minor version bump and an explicit allowlist registry entry.
+
+### 10.8 Key Management and Rotation
+
+Agents may rotate their signing keys by updating their DID document in the x811 registry. The following normative requirements apply:
+
+1. DID document updates MUST be applied atomically in the registry — no partial updates.
+2. When a key is rotated, the old key MUST be removed from the `verificationMethod` array in the DID document. Removal constitutes revocation; no separate revocation ceremony is required.
+3. Agents MUST NOT reuse key material across different DID identifiers.
+4. Servers MUST invalidate cached DID documents when signature verification fails, forcing a fresh resolution before issuing a final X811-2003 rejection (see Section 10.4).
+5. Agents performing key rotation SHOULD allow a brief grace period (RECOMMENDED: 30 seconds) before revoking the old key, to allow in-flight envelopes signed with the old key to complete verification.
 
 ---
 
@@ -815,6 +955,8 @@ Each state transition is bounded by a time-to-live (TTL). Servers MUST implement
 **Background TTL Checker:** Servers MUST run a background process that checks for expired interactions. The check interval SHOULD be no longer than 30 seconds. When an interaction's TTL has elapsed, the server MUST transition the interaction to the appropriate terminal state and MUST emit an x811/error message to both parties.
 
 **Payment Retries:** Unlike other transitions, payment confirmation timeout (X811-5030) does NOT automatically expire the interaction. The initiator SHOULD retry payment with exponential backoff (recommended intervals: 5s, 15s, 60s, 300s). After 4 failed attempts, the interaction transitions to `disputed`.
+
+**Out-of-Band Results:** When the RESULT message delivers content via `result_url` (no inline `content`), the initiator MUST retrieve the content from the URL and verify that `SHA-256(response_body_bytes)` equals `result_hash` before sending x811/verify. The 30-second RESULT→VERIFY TTL is designed to accommodate this retrieval. If the content at `result_url` is unavailable within the TTL, the initiator SHOULD send a VERIFY with `verified: false` and `dispute_code: TIMEOUT`. Servers SHOULD cache retrieved result content for dispute resolution purposes.
 
 ---
 
@@ -906,6 +1048,8 @@ If any condition is not met, the initiator MUST reject the OFFER with error code
 
 The initiator MUST NOT accept offers from providers whose DID documents are expired or revoked, regardless of other conditions.
 
+The `trust_score` used for condition 3 MUST be obtained from the x811 registry API response for the provider agent (see [Appendix C](#19-appendix-c-message-delivery-interface-normative), specifically the agent discovery endpoint). Trust scores MUST NOT be self-reported by the provider in the OFFER message; any `trust_score` field appearing in an OFFER payload MUST be ignored for acceptance policy evaluation.
+
 ### 13.2 human_approval
 
 When `acceptance_policy` is `"human_approval"`, the initiator MUST NOT automatically accept any OFFER. The initiator MUST escalate the OFFER to a human operator for review. The escalation MUST occur within the OFFER TTL window. If the human operator does not respond within the OFFER TTL, the OFFER expires with error code X811-4021.
@@ -944,6 +1088,13 @@ Example: `x811.ext/counter-offer`, `x811.myimpl/custom-verify`.
 
 Receivers that do not recognize a custom message type MUST ignore it and MUST NOT treat it as an error.
 
+### 14.4 Conformance Levels
+
+An implementation claims conformance at one of two levels:
+
+- **Conformant Server:** MUST implement all normative requirements in Sections 7, 9, 10, 11, 12, and 19. MUST enforce the state machine, TTLs, cryptographic verification, and message delivery interface.
+- **Conformant Client:** MUST generate valid X811Envelopes per Section 9, MUST implement the signing procedure in Section 9.3, and MUST correctly compute offer hashes per Section 10.3. Clients SHOULD implement acceptance policy semantics (Section 13) when acting as initiators.
+
 ---
 
 ## 15. Relationship to Other Standards
@@ -967,7 +1118,11 @@ x811 AEEP does not replace any of the standards listed below. It occupies the ne
 
 - **[RFC2119]** Bradner, S., "Key words for use in RFCs to Indicate Requirement Levels", BCP 14, RFC 2119, March 1997. https://www.rfc-editor.org/rfc/rfc2119
 
-- **[RFC8785]** Rundgren, S., Jordan, B., Erdtman, S., "JSON Canonicalization Scheme (JCS)", RFC 8785, June 2020. https://www.rfc-editor.org/rfc/rfc8785
+- **[RFC8032]** Josefsson, S., Liusvaara, I., "Edwards-Curve Digital Signature Algorithm (EdDSA)", RFC 8032, January 2017. https://www.rfc-editor.org/rfc/rfc8032 *(defines Ed25519, the mandatory-to-implement signing algorithm)*
+
+- **[RFC8259]** Bray, T. (Ed.), "The JavaScript Object Notation (JSON) Data Interchange Format", RFC 8259, December 2017. https://www.rfc-editor.org/rfc/rfc8259 *(string serialization rules used in x811 Canonical JSON)*
+
+- **[RFC8785]** Rundgren, S., Jordan, B., Erdtman, S., "JSON Canonicalization Scheme (JCS)", RFC 8785, June 2020. https://www.rfc-editor.org/rfc/rfc8785 *(x811 Canonical JSON is a compatible subset)*
 
 - **[W3C-DID]** W3C, "Decentralized Identifiers (DIDs) v1.0", W3C Recommendation, July 2022. https://www.w3.org/TR/did-core/
 
@@ -1063,11 +1218,134 @@ This appendix provides practical guidance for implementors. These are recommenda
 
 - **Last-Event-ID:** Always send the `Last-Event-ID` header on SSE reconnection. This enables the server to replay missed messages, achieving zero-message-loss delivery.
 
-- **Canonical Hashing:** When computing `offer_hash` for ACCEPT messages, ensure the OFFER payload is canonicalized using RFC 8785 before hashing. Common implementation error: hashing the JSON string as received (which may have different key ordering) rather than the canonicalized form.
+- **Canonical Hashing:** When computing `offer_hash` for ACCEPT messages, ensure the OFFER payload is serialized using x811 Canonical JSON (Section 9.5) before hashing. Common implementation error: hashing the JSON string as received (which may have different key ordering) rather than the x811 Canonical JSON form. Test your implementation against the vectors in Section 9.5.
 
 - **Payment Retries:** Implement exponential backoff for payment confirmation: 5s, 15s, 60s, 300s. After 4 failed attempts, transition the local interaction state to `disputed` and notify the operator.
 
 - **Clock Synchronization:** Ensure the client's system clock is NTP-synchronized. Timestamp validation (Section 10.2) uses a 5-minute tolerance, but sustained clock drift will cause intermittent authentication failures.
+
+---
+
+## 19. Appendix C: Message Delivery Interface (Normative)
+
+Compliant AEEP servers MUST expose the following HTTP endpoints. The transport layer (Appendix A describes SSE as one option) delivers messages through these endpoints.
+
+### 19.1 Submit Message
+
+```
+POST /api/v1/messages
+Content-Type: application/json
+```
+
+Request body: A complete X811Envelope JSON object.
+
+| HTTP Status | Meaning | Body |
+|---|---|---|
+| `202 Accepted` | Message accepted and queued for delivery | Empty or `{"status":"queued"}` |
+| `400 Bad Request` | Malformed envelope or payload schema violation | x811/error JSON |
+| `401 Unauthorized` | Signature verification failed | x811/error JSON (X811-2003) |
+| `409 Conflict` | Nonce replay detected | x811/error JSON (X811-2001) |
+| `422 Unprocessable Entity` | Invalid state transition | x811/error JSON (X811-4001) |
+| `429 Too Many Requests` | Rate limit exceeded | x811/error JSON (X811-9001) |
+
+### 19.2 Poll Messages
+
+```
+GET /api/v1/messages/{agentId}?did={agentDID}
+```
+
+Path parameter: `agentId` — the UUID component of the agent's DID (e.g., for `did:x811:abc-123`, agentId is `abc-123`).
+
+Query parameter: `did` — the full DID of the requesting agent, used for authentication (the server MUST verify that `did` corresponds to `agentId`).
+
+Response `200 OK`: JSON array of X811Envelope objects not yet delivered to this agent. The server MUST mark all returned messages as delivered upon successful response.
+
+Response `404 Not Found`: Agent not registered.
+
+### 19.3 Agent Discovery
+
+```
+GET /api/v1/agents?capability={capability}&trust_min={trust_min}
+```
+
+Returns a JSON array of Agent Card objects for registered agents. Each Agent Card MUST include a `trust_score` field (float, 0.0–1.0). Initiators MUST use this endpoint to obtain the provider's `trust_score` for acceptance policy evaluation (see Section 13.1).
+
+### 19.4 Agent Status
+
+```
+GET /api/v1/agents/{agentId}/status
+```
+
+Returns the current status of an agent including `trust_score`, `availability`, and `last_heartbeat`. Clients MAY poll this endpoint to verify provider availability before sending a REQUEST.
+
+---
+
+## 20. Appendix D: did:x811 Method Specification (Normative)
+
+This appendix defines the `did:x811` DID method used by AEEP for agent identity. Implementations MUST support this method.
+
+### 20.1 Identifier Syntax
+
+A `did:x811` identifier has the following format:
+
+```
+did:x811:<uuid>
+```
+
+Where `<uuid>` is a UUIDv4 or UUIDv7 string in standard hyphenated format (e.g., `did:x811:550e8400-e29b-41d4-a716-446655440000`). The UUID is assigned at registration and is immutable for the lifetime of the DID.
+
+### 20.2 DID Document Structure
+
+A `did:x811` DID document conforms to the W3C DID Core specification and MUST have the following structure:
+
+```json
+{
+  "@context": ["https://www.w3.org/ns/did/v1"],
+  "id": "did:x811:<uuid>",
+  "verificationMethod": [
+    {
+      "id": "did:x811:<uuid>#key-1",
+      "type": "Ed25519VerificationKey2020",
+      "controller": "did:x811:<uuid>",
+      "publicKeyMultibase": "<base58btc-encoded Ed25519 public key>"
+    }
+  ],
+  "authentication": ["did:x811:<uuid>#key-1"],
+  "assertionMethod": ["did:x811:<uuid>#key-1"]
+}
+```
+
+The `verificationMethod` array MUST contain at least one entry. The mandatory-to-implement `type` is `Ed25519VerificationKey2020`. The public key MUST be encoded in Multibase format with the `z` prefix indicating base58btc encoding.
+
+### 20.3 DID Resolution
+
+DID documents are resolved via the x811 registry HTTP endpoint:
+
+```
+GET /api/v1/agents/{uuid}/did
+```
+
+Response `200 OK`: The DID document JSON object.
+Response `404 Not Found`: The DID is not registered (X811-1001).
+Response `410 Gone`: The DID has been deactivated (X811-1003).
+
+Resolution MUST be attempted for every incoming envelope. Servers MAY cache resolved DID documents for up to 5 minutes. Cache entries MUST be invalidated when signature verification fails against the cached document (see Section 10.4).
+
+### 20.4 DID Registration
+
+Agents register by submitting a `POST /api/v1/agents` request with their Ed25519 public key and capability list. The registry assigns a UUID, creates the DID document, and returns the agent's DID. Registration responses MUST include the full DID document for the agent to verify.
+
+### 20.5 Key Rotation
+
+Key rotation is performed via `PATCH /api/v1/agents/{uuid}` with a request body containing the new public key, authenticated by a valid envelope signed with the **current** key. Upon successful rotation:
+
+1. The registry MUST atomically replace the `verificationMethod` entry in the DID document.
+2. The old key MUST be removed from `verificationMethod`; its absence constitutes revocation.
+3. All server-side DID document caches for this DID MUST be invalidated immediately.
+
+### 20.6 DID Deactivation
+
+An agent MAY deactivate its DID by sending `DELETE /api/v1/agents/{uuid}`, authenticated by a valid envelope signed with the current key. Deactivated DIDs MUST return `410 Gone` from the resolution endpoint, causing all subsequent envelope verification for that DID to fail with X811-1003 (DID_DEACTIVATED).
 
 ---
 

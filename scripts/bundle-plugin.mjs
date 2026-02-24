@@ -20,10 +20,11 @@ await build({
   outfile: join(root, "plugins/x811/dist/index.mjs"),
   bundle: true,
   platform: "node",
-  target: "node20",
+  target: "node22",
   format: "esm",
   sourcemap: false,
   minify: false,
+  external: ["@coinbase/agentkit", "@coinbase/coinbase-sdk"],
 });
 
 console.log("✓ Bundled → plugins/x811/dist/index.mjs");

@@ -396,6 +396,187 @@ describe("NegotiationService", () => {
       expect(final!.outcome).toBe("success");
       expect(final!.payment_tx).toBe("0xabc123def456");
     });
+
+    it("C1-regression: should reject payment with price-only amount (not total_cost)", async () => {
+      const initiator = createTestAgent();
+      const provider = createTestAgent();
+      const idempotencyKey = randomUUID();
+
+      // 1. REQUEST
+      const requestEnv = makeEnvelope(
+        "x811/request",
+        initiator.did,
+        provider.did,
+        {
+          task_type: "code-review",
+          parameters: {},
+          max_budget: 0.05,
+          currency: "USDC",
+          deadline: 60,
+          acceptance_policy: "auto",
+          idempotency_key: idempotencyKey,
+        },
+      );
+      const requestResult = await negotiation.handleRequest(requestEnv);
+      const interactionId = requestResult.interaction_id;
+
+      // 2. OFFER — price=0.03, fee=0.00075, total_cost=0.03075
+      const price = 0.03;
+      const protocolFee = Math.round(price * 0.025 * 1_000_000) / 1_000_000;
+      const totalCost = Math.round((price + protocolFee) * 1_000_000) / 1_000_000;
+
+      const offerEnv = makeEnvelope(
+        "x811/offer",
+        provider.did,
+        initiator.did,
+        {
+          request_id: interactionId,
+          price: price.toString(),
+          protocol_fee: protocolFee.toString(),
+          total_cost: totalCost.toString(),
+          currency: "USDC",
+          estimated_time: 30,
+          deliverables: ["report"],
+          expiry: 300,
+          payment_address: "0xprovider",
+        },
+      );
+      await negotiation.handleOffer(offerEnv);
+
+      // 3. ACCEPT — compute correct offer hash from stored offer_payload
+      const interaction = db.getInteraction(interactionId);
+      const offerHash = interaction!.offer_payload
+        ? (() => {
+          const { sha256 } = require("@noble/hashes/sha256");
+          const { bytesToHex } = require("@noble/hashes/utils");
+          return bytesToHex(
+            sha256(new TextEncoder().encode(interaction!.offer_payload!)),
+          );
+        })()
+        : "test-hash";
+      const acceptEnv = makeEnvelope("x811/accept", initiator.did, provider.did, {
+        offer_id: interactionId,
+        offer_hash: offerHash,
+      });
+      await negotiation.handleAccept(acceptEnv);
+
+      // 4. RESULT
+      const resultEnv = makeEnvelope("x811/result", provider.did, initiator.did, {
+        request_id: interactionId,
+        offer_id: interactionId,
+        content: "analysis result",
+        content_type: "text/plain",
+        result_hash: "abc123",
+        execution_time_ms: 500,
+      });
+      await negotiation.handleResult(resultEnv);
+
+      // 5. VERIFY
+      const verifyEnv = makeEnvelope("x811/verify", initiator.did, provider.did, {
+        request_id: interactionId,
+        result_hash: "abc123",
+        verified: true,
+      });
+      await negotiation.handleVerify(verifyEnv);
+
+      // 6. PAYMENT — send price (0.03) instead of total_cost (0.03075) → should REJECT with X811-5003
+      const paymentEnv = makeEnvelope("x811/payment", initiator.did, provider.did, {
+        request_id: interactionId,
+        offer_id: interactionId,
+        tx_hash: "0xbadpayment",
+        amount: price, // BUG: sending price, not total_cost
+        currency: "USDC",
+        network: "base",
+        payer_address: "0xpayer",
+        payee_address: "0xpayee",
+      });
+
+      await expect(negotiation.handlePayment(paymentEnv)).rejects.toThrow("Payment amount does not match offer total");
+    });
+
+    it("C1-regression: should accept payment with correct total_cost amount", async () => {
+      const initiator = createTestAgent();
+      const provider = createTestAgent();
+      const idempotencyKey = randomUUID();
+
+      const requestEnv = makeEnvelope("x811/request", initiator.did, provider.did, {
+        task_type: "code-review",
+        parameters: {},
+        max_budget: 0.05,
+        currency: "USDC",
+        deadline: 60,
+        acceptance_policy: "auto",
+        idempotency_key: idempotencyKey,
+      });
+      const requestResult = await negotiation.handleRequest(requestEnv);
+      const interactionId = requestResult.interaction_id;
+
+      const price = 0.03;
+      const protocolFee = Math.round(price * 0.025 * 1_000_000) / 1_000_000;
+      const totalCost = Math.round((price + protocolFee) * 1_000_000) / 1_000_000;
+
+      const offerEnv = makeEnvelope("x811/offer", provider.did, initiator.did, {
+        request_id: interactionId,
+        price: price.toString(),
+        protocol_fee: protocolFee.toString(),
+        total_cost: totalCost.toString(),
+        currency: "USDC",
+        estimated_time: 30,
+        deliverables: ["report"],
+        expiry: 300,
+        payment_address: "0xprovider",
+      });
+      await negotiation.handleOffer(offerEnv);
+
+      // Compute correct offer hash from stored offer_payload
+      const interaction = db.getInteraction(interactionId);
+      const offerHash = interaction!.offer_payload
+        ? (() => {
+          const { sha256 } = require("@noble/hashes/sha256");
+          const { bytesToHex } = require("@noble/hashes/utils");
+          return bytesToHex(
+            sha256(new TextEncoder().encode(interaction!.offer_payload!)),
+          );
+        })()
+        : "test-hash";
+      const acceptEnv = makeEnvelope("x811/accept", initiator.did, provider.did, {
+        offer_id: interactionId,
+        offer_hash: offerHash,
+      });
+      await negotiation.handleAccept(acceptEnv);
+
+      const resultEnv = makeEnvelope("x811/result", provider.did, initiator.did, {
+        request_id: interactionId,
+        offer_id: interactionId,
+        content: "analysis result",
+        content_type: "text/plain",
+        result_hash: "abc123",
+        execution_time_ms: 500,
+      });
+      await negotiation.handleResult(resultEnv);
+
+      const verifyEnv = makeEnvelope("x811/verify", initiator.did, provider.did, {
+        request_id: interactionId,
+        result_hash: "abc123",
+        verified: true,
+      });
+      await negotiation.handleVerify(verifyEnv);
+
+      // Correct payment: send total_cost (0.03075), not just price (0.03)
+      const paymentEnv = makeEnvelope("x811/payment", initiator.did, provider.did, {
+        request_id: interactionId,
+        offer_id: interactionId,
+        tx_hash: "0xgoodpayment",
+        amount: totalCost, // CORRECT: total_cost includes protocol fee
+        currency: "USDC",
+        network: "base",
+        payer_address: "0xpayer",
+        payee_address: "0xpayee",
+      });
+
+      const result = await negotiation.handlePayment(paymentEnv);
+      expect(result.status).toBe("completed");
+    });
   });
 
   describe("Idempotency", () => {

@@ -37,7 +37,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import { X811Client, generateDID, createWalletAdapter } from "@x811/sdk";
-import type { WalletAdapter } from "@x811/sdk";
+import type { WalletAdapter, VerifyPayload } from "@x811/sdk";
 import type { DIDKeyPair } from "@x811/core";
 import { initBuffer, pushToBuffer, consumeFromBuffer, drainBuffer, bufferSize } from "./buffer-utils.js";
 import { SSEClient } from "./sse-client.js";
@@ -396,9 +396,19 @@ server.tool(
     deliverables: z.array(z.string()).describe("List of deliverables"),
     terms: z.string().optional().describe("Additional terms or conditions"),
     expiry: z.number().optional().describe("Offer expiry in seconds (default 300)"),
+    payment_address: z.string().optional().describe("Checksummed Ethereum address for receiving USDC payment (defaults to wallet address)"),
   },
-  async ({ initiator_did, request_id, price, estimated_time, deliverables, terms, expiry }) => {
+  async ({ initiator_did, request_id, price, estimated_time, deliverables, terms, expiry, payment_address }) => {
     try {
+      // Validate payment address — reject empty or zero address
+      const resolvedAddress = payment_address || wallet?.address || "";
+      if (!resolvedAddress || resolvedAddress === "0x" + "0".repeat(40)) {
+        return {
+          content: [{ type: "text" as const, text: "Offer failed: No payment address configured. Set X811_PRIVATE_KEY env var or provide payment_address parameter. Run x811_setup_wallet for instructions." }],
+          isError: true,
+        };
+      }
+
       const priceNum = parseFloat(price);
       const protocolFee = (priceNum * 0.025).toFixed(6);
       const totalCost = (priceNum + parseFloat(protocolFee)).toFixed(6);
@@ -413,6 +423,7 @@ server.tool(
         deliverables,
         terms,
         expiry: expiry || 300,
+        payment_address: resolvedAddress,
       });
       return {
         content: [{
@@ -561,7 +572,7 @@ server.tool(
   async ({ provider_did, interaction_id, result_hash, verified, dispute_reason, dispute_code }) => {
     try {
       const isVerified = verified ?? true;
-      const verifyPayload = {
+      const verifyPayload: VerifyPayload = {
         request_id: interaction_id,
         offer_id: interaction_id,
         result_hash: result_hash || "",
@@ -638,11 +649,13 @@ server.tool(
         }
       }
 
+      // Report total_cost (price + protocol fee) to server — server validates against offer's total_cost
+      const totalReported = amount + protocolFee;
       const messageId = await client.pay(provider_did, {
         request_id,
         offer_id,
         tx_hash: paymentResult.tx_hash,
-        amount: paymentResult.amount,
+        amount: String(totalReported),
         currency: "USDC",
         network: "base",
         payer_address: paymentResult.payer_address,
@@ -654,7 +667,7 @@ server.tool(
       return {
         content: [{
           type: "text",
-          text: `Payment sent! $${amount} USDC\nmessage_id: ${messageId}\ntx_hash: ${paymentResult.tx_hash}${feeInfo}`,
+          text: `Payment sent! $${totalReported} USDC (provider: $${amount}, fee: $${protocolFee})\nmessage_id: ${messageId}\ntx_hash: ${paymentResult.tx_hash}${feeInfo}`,
         }],
       };
     } catch (err) {
@@ -879,6 +892,13 @@ server.tool(
       const protocolFee = (priceNum * 0.025).toFixed(6);
       const totalCost = (priceNum + parseFloat(protocolFee)).toFixed(6);
 
+      // Validate payment address — reject empty or zero address
+      const providerAddress = wallet?.address ?? "";
+      if (!providerAddress || providerAddress === "0x" + "0".repeat(40)) {
+        log.push(`  ✗ No payment address configured. Set X811_PRIVATE_KEY env var. Run x811_setup_wallet for instructions.`);
+        return { content: [{ type: "text" as const, text: log.join("\n") }], isError: true };
+      }
+
       log.push(`[4/5] Sending offer: $${offerPrice} USDC (+ $${protocolFee} fee)...`);
       process.stderr.write(`[x811:provider] Sending offer to ${initiatorDid}: $${offerPrice} + $${protocolFee} fee = $${totalCost}\n`);
       await client.offer(initiatorDid, {
@@ -890,7 +910,7 @@ server.tool(
         estimated_time: 30,
         deliverables: [`${capability} result`],
         expiry: 300,
-        payment_address: wallet?.address ?? "",
+        payment_address: providerAddress,
       });
       log.push(`  ✓ Offer sent`);
       process.stderr.write(`[x811:provider] Offer sent successfully!\n`);
@@ -1077,11 +1097,13 @@ server.tool(
       // Step 7: Verify — send with correct payload format for negotiation service
       log.push(`[7/8] Verifying result...`);
       const interactionId = offerPayload.request_id as string;
-      await client.send(providerDid, "x811/verify", {
+      const autoVerifyPayload: VerifyPayload = {
         request_id: interactionId,
+        offer_id: interactionId,
         result_hash: resultPayload.result_hash as string,
         verified: true,
-      });
+      };
+      await client.send(providerDid, "x811/verify", autoVerifyPayload);
       log.push(`  ✓ Verification sent`);
 
       // Step 8: Pay — extract provider's payment address from offer, with fee split
@@ -1148,11 +1170,12 @@ server.tool(
         log.push(`  ! Protocol fee $${protocolFeeStr} skipped (no X811_TREASURY_ADDRESS configured)`);
       }
 
+      // Report total_cost (price + protocol fee) to server — server validates against offer's total_cost
       await client.pay(providerDid, {
         request_id: interactionId,
         offer_id: interactionId,
         tx_hash: paymentResult.tx_hash,
-        amount: paymentResult.amount,
+        amount: String(totalCost),
         currency: "USDC",
         network: "base",
         payer_address: paymentResult.payer_address,

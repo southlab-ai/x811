@@ -124,6 +124,12 @@ export async function buildApp(
     );
   } else {
     relayer = new MockRelayerService();
+    if (config.nodeEnv === "production") {
+      app.log.warn(
+        "WARNING: Running in production with MockRelayerService — on-chain batching is disabled. " +
+        "Set RELAYER_PRIVATE_KEY and CONTRACT_ADDRESS for real Merkle anchoring.",
+      );
+    }
   }
 
   const trust = new TrustService(db);
